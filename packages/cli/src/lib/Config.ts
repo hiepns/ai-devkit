@@ -1,6 +1,6 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { DevKitConfig, Phase, EnvironmentCode, ConfigSkill } from '../types';
+import { DevKitConfig, Phase, EnvironmentCode, ConfigSkill, DEFAULT_DOCS_DIR } from '../types';
 import packageJson from '../../package.json';
 
 const CONFIG_FILE_NAME = '.ai-devkit.json';
@@ -80,6 +80,19 @@ export class ConfigManager {
     return Array.isArray(config.phases) && config.phases.includes(phase);
   }
 
+  async getDocsDir(): Promise<string> {
+    const config = await this.read();
+    return config?.paths?.docs || DEFAULT_DOCS_DIR;
+  }
+
+  async setDocsDir(docsDir: string): Promise<DevKitConfig> {
+    const config = await this.read();
+    if (!config) {
+      throw new Error('Config file not found. Run ai-devkit init first.');
+    }
+    return this.update({ paths: { ...config.paths, docs: docsDir } });
+  }
+
   async getEnvironments(): Promise<EnvironmentCode[]> {
     const config = await this.read();
     return config?.environments || [];
@@ -111,5 +124,24 @@ export class ConfigManager {
 
     skills.push(skill);
     return this.update({ skills });
+  }
+
+  async getSkillRegistries(): Promise<Record<string, string>> {
+    const config = await this.read() as any;
+    const rootRegistries = config?.registries;
+    const nestedRegistries =
+      config?.skills && !Array.isArray(config.skills)
+        ? config.skills.registries
+        : undefined;
+
+    const registries = rootRegistries ?? nestedRegistries;
+
+    if (!registries || typeof registries !== 'object' || Array.isArray(registries)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(registries).filter(([, value]) => typeof value === 'string')
+    ) as Record<string, string>;
   }
 }

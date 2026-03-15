@@ -7,7 +7,9 @@ import {
     CodexAdapter,
     AgentStatus,
     TerminalFocusManager,
+    TtyWriter,
     type AgentInfo,
+    type AgentType,
 } from '@ai-devkit/agent-manager';
 import { ui } from '../util/terminal-ui';
 
@@ -35,6 +37,17 @@ function formatRelativeTime(timestamp: Date): string {
 
     const diffDays = Math.floor(diffHours / 24);
     return `${diffDays}d ago`;
+}
+
+const TYPE_LABELS: Record<AgentType, string> = {
+    claude: 'Claude Code',
+    codex: 'Codex',
+    gemini_cli: 'Gemini CLI',
+    other: 'Other',
+};
+
+function formatType(type: AgentType): string {
+    return TYPE_LABELS[type] ?? type;
 }
 
 function formatWorkOn(summary?: string): string {
@@ -76,23 +89,19 @@ export function registerAgentCommand(program: Command): void {
 
                 const rows = agents.map(agent => [
                     agent.name,
+                    formatType(agent.type),
                     formatStatus(agent.status),
                     formatWorkOn(agent.summary),
                     formatRelativeTime(agent.lastActive)
                 ]);
 
                 ui.table({
-                    headers: ['Agent', 'Status', 'Working On', 'Active'],
+                    headers: ['Agent', 'Type', 'Status', 'Working On', 'Active'],
                     rows: rows,
-                    // Custom column styling
-                    // 0: Name (cyan)
-                    // 1: Status (dynamic based on content)
-                    // 2: Working On (standard)
-                    // 3: Active (dim)
                     columnStyles: [
                         (text) => chalk.cyan(text),
+                        (text) => chalk.dim(text),
                         (text) => {
-                            // Extract status keyword to determine color
                             if (text.includes(STATUS_DISPLAY[AgentStatus.RUNNING].label)) return chalk.green(text);
                             if (text.includes(STATUS_DISPLAY[AgentStatus.WAITING].label)) return chalk.yellow(text);
                             if (text.includes(STATUS_DISPLAY[AgentStatus.IDLE].label)) return chalk.dim(text);
@@ -187,6 +196,60 @@ export function registerAgentCommand(program: Command): void {
 
             } catch (error: any) {
                 ui.error(`Failed to open agent: ${error.message}`);
+                process.exit(1);
+            }
+        });
+
+    agentCommand
+        .command('send <message>')
+        .description('Send a message to a running agent')
+        .requiredOption('--id <identifier>', 'Agent name, slug, or partial match')
+        .action(async (message, options) => {
+            try {
+                const manager = new AgentManager();
+                manager.registerAdapter(new ClaudeCodeAdapter());
+                manager.registerAdapter(new CodexAdapter());
+
+                const agents = await manager.listAgents();
+                if (agents.length === 0) {
+                    ui.error('No running agents found.');
+                    return;
+                }
+
+                const resolved = manager.resolveAgent(options.id, agents);
+
+                if (!resolved) {
+                    ui.error(`No agent found matching "${options.id}".`);
+                    ui.info('Available agents:');
+                    agents.forEach(a => console.log(`  - ${a.name}`));
+                    return;
+                }
+
+                if (Array.isArray(resolved)) {
+                    ui.error(`Multiple agents match "${options.id}":`);
+                    resolved.forEach(a => console.log(`  - ${a.name} (${formatStatus(a.status)})`));
+                    ui.info('Please use a more specific identifier.');
+                    return;
+                }
+
+                const agent = resolved as AgentInfo;
+
+                if (agent.status !== AgentStatus.WAITING) {
+                    ui.warning(`Agent "${agent.name}" is not waiting for input (status: ${agent.status}). Sending anyway.`);
+                }
+
+                const focusManager = new TerminalFocusManager();
+                const location = await focusManager.findTerminal(agent.pid);
+                if (!location) {
+                    ui.error(`Cannot find terminal for agent "${agent.name}" (PID: ${agent.pid}).`);
+                    return;
+                }
+
+                await TtyWriter.send(location, message);
+                ui.success(`Sent message to ${agent.name}.`);
+
+            } catch (error: any) {
+                ui.error(`Failed to send message: ${error.message}`);
                 process.exit(1);
             }
         });

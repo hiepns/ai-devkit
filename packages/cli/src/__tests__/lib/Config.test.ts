@@ -254,6 +254,72 @@ describe('ConfigManager', () => {
     });
   });
 
+  describe('getDocsDir', () => {
+    it('should return custom docsDir when set in config', async () => {
+      const config: DevKitConfig = {
+        version: '1.0.0',
+        paths: { docs: '.ai-docs' },
+        environments: [],
+        phases: [],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      };
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue(config);
+
+      const result = await configManager.getDocsDir();
+
+      expect(result).toBe('.ai-docs');
+    });
+
+    it('should return default docs/ai when docsDir is not set', async () => {
+      const config: DevKitConfig = {
+        version: '1.0.0',
+        environments: [],
+        phases: [],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      };
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue(config);
+
+      const result = await configManager.getDocsDir();
+
+      expect(result).toBe('docs/ai');
+    });
+
+    it('should return default docs/ai when config does not exist', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(false);
+
+      const result = await configManager.getDocsDir();
+
+      expect(result).toBe('docs/ai');
+    });
+  });
+
+  describe('setDocsDir', () => {
+    it('should update docsDir in config', async () => {
+      const config: DevKitConfig = {
+        version: '1.0.0',
+        environments: [],
+        phases: [],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      };
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue(config);
+      (mockFs.writeJson as any).mockResolvedValue(undefined);
+
+      const result = await configManager.setDocsDir('.ai-docs');
+
+      expect(result.paths?.docs).toBe('.ai-docs');
+      expect(mockFs.writeJson).toHaveBeenCalled();
+    });
+  });
+
   describe('getEnvironments', () => {
     it('should return environments array when config exists', async () => {
       const config: DevKitConfig = {
@@ -402,6 +468,68 @@ describe('ConfigManager', () => {
 
       expect(result.skills).toEqual([{ registry: 'codeaholicguy/ai-devkit', name: 'debug' }]);
       expect(mockFs.writeJson).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getSkillRegistries', () => {
+    it('returns registries from root-level "registries"', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue({
+        version: '1.0.0',
+        environments: ['cursor'],
+        phases: [],
+        registries: {
+          'project/skills': 'https://github.com/project/skills.git',
+          'invalid/entry': 123
+        },
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      });
+
+      const registries = await configManager.getSkillRegistries();
+
+      expect(registries).toEqual({
+        'project/skills': 'https://github.com/project/skills.git'
+      });
+    });
+
+    it('falls back to nested "skills.registries" when root registries are missing', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue({
+        version: '1.0.0',
+        environments: ['cursor'],
+        phases: [],
+        skills: {
+          registries: {
+            'nested/skills': 'https://github.com/nested/skills.git',
+            'invalid/value': false
+          }
+        },
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      });
+
+      const registries = await configManager.getSkillRegistries();
+
+      expect(registries).toEqual({
+        'nested/skills': 'https://github.com/nested/skills.git'
+      });
+    });
+
+    it('returns empty object when no registry map exists', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue({
+        version: '1.0.0',
+        environments: ['cursor'],
+        phases: [],
+        skills: [{ registry: 'codeaholicguy/ai-devkit', name: 'debug' }],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      });
+
+      const registries = await configManager.getSkillRegistries();
+
+      expect(registries).toEqual({});
     });
   });
 });

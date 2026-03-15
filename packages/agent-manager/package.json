@@ -1,6 +1,6 @@
 {
   "name": "@ai-devkit/agent-manager",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Standalone agent detection and management utilities for AI DevKit",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -37,6 +37,6 @@
     "typescript": "^5.3.3"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=20.20.0"
   }
 }
