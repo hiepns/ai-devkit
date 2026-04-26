@@ -39,12 +39,12 @@ If the user wants to continue work on an existing feature:
 1. Check branch and worktree state before phase work:
    - Branch check: `git branch --show-current`
    - Worktree check: `git worktree list`
-2. Determine target context for `<feature-name>`:
-   - Prefer worktree `.worktrees/feature-<name>` when it exists.
+2. Determine target context for `<feature-name>` (all `.worktrees/` paths are relative to the **project root** — the directory containing `.git`):
+   - Prefer worktree `<project-root>/.worktrees/feature-<name>` when it exists.
    - Otherwise use branch `feature-<name>` in the current repository.
 3. Before switching, explicitly confirm target with the user (branch or worktree path).
 4. After user confirmation, switch to the confirmed context first:
-   - Worktree: run phase commands with `workdir=.worktrees/feature-<name>`.
+   - Worktree: run phase commands with `workdir=<project-root>/.worktrees/feature-<name>`.
    - Branch: checkout `feature-<name>` in current repo.
 5. After switching, run `npx ai-devkit@latest lint --feature <feature-name>` in the active branch/worktree context.
 6. Then run the phase detector using the installed skill directory (same resolution rule as reference docs), not a workspace-relative `skills/...` path:
@@ -70,13 +70,23 @@ Phases: `requirements/`, `design/`, `planning/`, `implementation/`, `testing/`.
 
 ## Memory Integration
 
-Use `npx ai-devkit@latest memory` CLI in any phase that involves clarification questions (typically Phases 1-3):
+In phases with clarification questions (typically 1-3), run these CLI commands (see the `memory` skill for full options):
 
-1. **Before asking questions**: `npx ai-devkit@latest memory search --query "<topic>"`. Apply matches; only ask about uncovered gaps.
-2. **After clarification**: `npx ai-devkit@latest memory store --title "<title>" --content "<knowledge>" --tags "<tags>"`.
+1. **Before asking** — search first, only ask about uncovered gaps: `npx ai-devkit@latest memory search --query "<topic>"`
+2. **After clarification** — store for future sessions: `npx ai-devkit@latest memory store --title "<title>" --content "<insight>" --tags "<tags>"`
+
+## Red Flags and Rationalizations
+
+| Rationalization | Why It's Wrong | Do Instead |
+|---|---|---|
+| "Skip to coding, requirements are clear" | Ambiguity hides in assumptions | Run Phase 1-3 first |
+| "Design hasn't changed, skip Phase 6" | Code drifts from design during implementation | Check implementation against design |
+| "Tests slow us down, ship first" | Bugs in production are slower | Write tests in Phase 4 and 7 |
+| "Just a small change, no review needed" | Small changes cause big outages | Phase 8 applies to all changes |
 
 ## Rules
 
 - Read existing `docs/ai/` before changes. Keep diffs minimal.
 - Use mermaid diagrams for architecture visuals.
 - After each phase, summarize output and suggest next phase.
+- Apply the `verify` skill before completing Phase 4 tasks, Phase 6 checks, Phase 7 coverage claims, and Phase 8 review items. No phase transition without fresh evidence.

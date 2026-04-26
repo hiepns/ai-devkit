@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import { AgentManager } from '../AgentManager';
-import type { AgentAdapter, AgentInfo, AgentType } from '../adapters/AgentAdapter';
+import type { AgentAdapter, AgentInfo, AgentType, ConversationMessage } from '../adapters/AgentAdapter';
 import { AgentStatus } from '../adapters/AgentAdapter';
 
 // Mock adapter for testing
@@ -26,6 +26,10 @@ class MockAdapter implements AgentAdapter {
         return true;
     }
 
+    getConversation(): ConversationMessage[] {
+        return [];
+    }
+
     setAgents(agents: AgentInfo[]): void {
         this.mockAgents = agents;
     }
@@ -45,7 +49,6 @@ function createMockAgent(overrides: Partial<AgentInfo> = {}): AgentInfo {
         pid: 12345,
         projectPath: '/test/path',
         sessionId: 'test-session-id',
-        slug: 'test-slug',
         lastActive: new Date(),
         ...overrides,
     };
@@ -130,17 +133,6 @@ describe('AgentManager', () => {
         });
     });
 
-    describe('hasAdapter', () => {
-        it('should return true for registered adapter', () => {
-            manager.registerAdapter(new MockAdapter('claude'));
-            expect(manager.hasAdapter('claude')).toBe(true);
-        });
-
-        it('should return false for non-registered adapter', () => {
-            expect(manager.hasAdapter('claude')).toBe(false);
-        });
-    });
-
     describe('listAgents', () => {
         it('should return empty array when no adapters registered', async () => {
             const agents = await manager.listAgents();
@@ -219,20 +211,6 @@ describe('AgentManager', () => {
 
             const agents = await manager.listAgents();
             expect(agents).toEqual([]);
-        });
-    });
-
-    describe('getAdapterCount', () => {
-        it('should return 0 when no adapters registered', () => {
-            expect(manager.getAdapterCount()).toBe(0);
-        });
-
-        it('should return correct count', () => {
-            manager.registerAdapter(new MockAdapter('claude'));
-            expect(manager.getAdapterCount()).toBe(1);
-
-            manager.registerAdapter(new MockAdapter('gemini_cli'));
-            expect(manager.getAdapterCount()).toBe(2);
         });
     });
 

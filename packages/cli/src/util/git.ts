@@ -1,9 +1,11 @@
-import { exec, execFileSync } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import { GitError } from './errors';
+import { ui } from './terminal-ui';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 export type GitExecFileSync = (
   file: string,
   args: readonly string[],
@@ -22,9 +24,9 @@ const defaultExecFileSync: GitExecFileSync = (
  */
 export async function ensureGitInstalled(): Promise<void> {
   try {
-    await execAsync('git --version');
+    await execFileAsync('git', ['--version']);
   } catch {
-    throw new Error(
+    throw new GitError(
       'Git is not installed or not in PATH. Please install Git: https://git-scm.com/downloads'
     );
   }
@@ -42,21 +44,22 @@ export async function cloneRepository(targetDir: string, repoName: string, gitUr
   const repoPath = path.join(targetDir, repoName);
 
   if (await fs.pathExists(repoPath)) {
-    console.log(`  → ${targetDir}/${repoName} (already exists, skipped)`);
+    ui.text(`  → ${targetDir}/${repoName} (already exists, skipped)`);
     return repoPath;
   }
 
-  console.log(`  → Cloning ${repoName} (this may take a moment)...`);
+  ui.text(`  → Cloning ${repoName} (this may take a moment)...`);
   await fs.ensureDir(path.dirname(repoPath));
 
   try {
-    await execAsync(`git clone --depth 1 --single-branch "${gitUrl}" "${repoPath}"`, {
+    await execFileAsync('git', ['clone', '--depth', '1', '--single-branch', gitUrl, repoPath], {
       timeout: 60000,
     });
-    console.log('  → Clone complete');
+    ui.text('  → Clone complete');
     return repoPath;
-  } catch (error: any) {
-    throw new Error(`Git clone failed: ${error.message}. Check network and git installation.`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new GitError(`Git clone failed: ${message}. Check network and git installation.`, { gitUrl });
   }
 }
 
@@ -77,13 +80,13 @@ export async function isGitRepository(dirPath: string): Promise<boolean> {
  */
 export async function pullRepository(repoPath: string): Promise<void> {
   try {
-    await execAsync('git pull', {
+    await execFileAsync('git', ['pull'], {
       cwd: repoPath,
       timeout: 60000,
     });
-  } catch (error: any) {
-    const message = error.message || 'Unknown error';
-    throw new Error(`Git pull failed: ${message}`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new GitError(`Git pull failed: ${message}`, { repoPath });
   }
 }
 
@@ -95,16 +98,17 @@ export async function pullRepository(repoPath: string): Promise<void> {
  */
 export async function fetchGitHead(gitUrl: string): Promise<string> {
   try {
-    const { stdout } = await execAsync(`git ls-remote ${gitUrl} HEAD`);
+    const { stdout } = await execFileAsync('git', ['ls-remote', gitUrl, 'HEAD']);
     const match = stdout.trim().match(/^([a-f0-9]+)\s+HEAD$/m);
 
     if (!match) {
-      throw new Error('Could not parse HEAD from ls-remote output');
+      throw new GitError('Could not parse HEAD from ls-remote output', { gitUrl });
     }
 
     return match[1];
-  } catch (error: any) {
-    throw new Error(`Failed to fetch git HEAD: ${error.message}`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new GitError(`Failed to fetch git HEAD: ${message}`, { gitUrl });
   }
 }
 

@@ -1,18 +1,20 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import inquirer from 'inquirer';
+import { BUILTIN_SKILL_NAMES, BUILTIN_SKILL_REGISTRY } from '../constants';
 import { ConfigManager } from '../lib/Config';
 import { TemplateManager } from '../lib/TemplateManager';
 import { EnvironmentSelector } from '../lib/EnvironmentSelector';
 import { PhaseSelector } from '../lib/PhaseSelector';
 import { SkillManager } from '../lib/SkillManager';
 import { loadInitTemplate, InitTemplateSkill } from '../lib/InitTemplate';
-import { EnvironmentCode, PHASE_DISPLAY_NAMES, Phase } from '../types';
+import { EnvironmentCode, PHASE_DISPLAY_NAMES, Phase, DEFAULT_DOCS_DIR } from '../types';
 import { isValidEnvironmentCode } from '../util/env';
+import { isInteractiveTerminal } from '../util/terminal';
 import { ui } from '../util/terminal-ui';
 
 function isGitAvailable(): boolean {
   try {
-    execSync('git --version', { stdio: 'ignore' });
+    execFileSync('git', ['--version'], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -28,10 +30,10 @@ function ensureGitRepository(): void {
   }
 
   try {
-    execSync('git rev-parse --is-inside-work-tree', { stdio: 'ignore' });
+    execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' });
   } catch {
     try {
-      execSync('git init', { stdio: 'ignore' });
+      execFileSync('git', ['init'], { stdio: 'ignore' });
       ui.success('Initialized a new git repository');
     } catch (error) {
       ui.error(
@@ -46,6 +48,8 @@ interface InitOptions {
   all?: boolean;
   phases?: string;
   template?: string;
+  docsDir?: string;
+  builtIn?: boolean;
 }
 
 function normalizeEnvironmentOption(
@@ -63,6 +67,35 @@ function normalizeEnvironmentOption(
     .split(',')
     .map(value => value.trim())
     .filter((value): value is EnvironmentCode => value.length > 0);
+}
+
+const BUILTIN_SKILLS: InitTemplateSkill[] = BUILTIN_SKILL_NAMES.map((skill: string) => ({
+  registry: BUILTIN_SKILL_REGISTRY,
+  skill
+}));
+
+async function shouldInstallBuiltinSkills(options: InitOptions): Promise<boolean> {
+  if (options.builtIn) {
+    return true;
+  }
+
+  if (!isInteractiveTerminal()) {
+    ui.info(
+      `Skipping built-in skills (non-interactive environment). Pass --built-in to install them from ${BUILTIN_SKILL_REGISTRY}.`
+    );
+    return false;
+  }
+
+  const { installBuiltinSkills } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'installBuiltinSkills',
+      message: `Install AI DevKit built-in skills from ${BUILTIN_SKILL_REGISTRY}?`,
+      default: true
+    }
+  ]);
+
+  return Boolean(installBuiltinSkills);
 }
 
 interface TemplateSkillInstallResult {
@@ -173,9 +206,9 @@ export async function initCommand(options: InitOptions) {
     }
   }
   const existingEnvironments: EnvironmentCode[] = [];
-  for (const envId of selectedEnvironments) {
-    if (await templateManager.checkEnvironmentExists(envId)) {
-      existingEnvironments.push(envId);
+  for (const envCode of selectedEnvironments) {
+    if (await templateManager.checkEnvironmentExists(envCode)) {
+      existingEnvironments.push(envCode);
     }
   }
 
@@ -208,12 +241,25 @@ export async function initCommand(options: InitOptions) {
     return;
   }
 
+  let docsDir = DEFAULT_DOCS_DIR;
+  if (options.docsDir?.trim()) {
+    docsDir = options.docsDir.trim();
+  } else if (templateConfig?.paths?.docs) {
+    docsDir = templateConfig.paths.docs;
+  }
+
+  const phaseTemplateManager = new TemplateManager({ docsDir });
+
   ui.text('Initializing AI DevKit...', { breakline: true });
 
   let config = await configManager.read();
   if (!config) {
     config = await configManager.create();
     ui.success('Created configuration file');
+  }
+
+  if (docsDir !== DEFAULT_DOCS_DIR) {
+    await configManager.update({ paths: { docs: docsDir } });
   }
 
   await configManager.setEnvironments(selectedEnvironments);
@@ -229,13 +275,13 @@ export async function initCommand(options: InitOptions) {
     }
   }
   ui.text('Setting up environment templates...', { breakline: true });
-  const envFiles = await templateManager.setupMultipleEnvironments(selectedEnvironments);
+  const envFiles = await phaseTemplateManager.setupMultipleEnvironments(selectedEnvironments);
   envFiles.forEach(file => {
     ui.success(`Created ${file}`);
   });
 
   for (const phase of selectedPhases) {
-    const exists = await templateManager.fileExists(phase);
+    const exists = await phaseTemplateManager.fileExists(phase);
     let shouldCopy = true;
 
     if (exists) {
@@ -255,11 +301,19 @@ export async function initCommand(options: InitOptions) {
     }
 
     if (shouldCopy) {
-      await templateManager.copyPhaseTemplate(phase);
+      await phaseTemplateManager.copyPhaseTemplate(phase);
       await configManager.addPhase(phase);
       ui.success(`Created ${phase} phase`);
     } else {
       ui.warning(`Skipped ${phase} phase`);
+    }
+  }
+
+  if (templateConfig?.registries) {
+    const registryCount = Object.keys(templateConfig.registries).length;
+    if (registryCount > 0) {
+      await configManager.update({ registries: templateConfig.registries });
+      ui.success(`Saved ${registryCount} custom registry(ies) to config.`);
     }
   }
 
@@ -284,11 +338,38 @@ export async function initCommand(options: InitOptions) {
         ui.warning(`${result.registry}/${result.skill}: ${result.reason || 'Unknown error'}`);
       });
     }
+  } else if (!hasTemplate) {
+    const shouldInstall = await shouldInstallBuiltinSkills(options);
+
+    if (shouldInstall) {
+      ui.text('Installing AI DevKit built-in skills...', { breakline: true });
+      const skillResults = await installTemplateSkills(skillManager, BUILTIN_SKILLS);
+      const installedCount = skillResults.filter(result => result.status === 'installed').length;
+      const failedResults = skillResults.filter(result => result.status === 'failed');
+
+      if (installedCount > 0) {
+        ui.success(`Installed ${installedCount} built-in skill(s).`);
+      }
+      if (failedResults.length > 0) {
+        ui.warning(
+          `${failedResults.length} built-in skill install(s) failed. Continuing with warnings.`
+        );
+        failedResults.forEach(result => {
+          ui.warning(`${result.registry}/${result.skill}: ${result.reason || 'Unknown error'}`);
+        });
+      }
+    }
+  }
+
+  if (templateConfig?.mcpServers && Object.keys(templateConfig.mcpServers).length > 0) {
+    await configManager.update({ mcpServers: templateConfig.mcpServers });
+    ui.success(`Saved ${Object.keys(templateConfig.mcpServers).length} MCP server definition(s) to config.`);
+    ui.info('Run `ai-devkit install` to generate agent-specific MCP config files.');
   }
 
   ui.text('AI DevKit initialized successfully!', { breakline: true });
   ui.info('Next steps:');
-  ui.text('  • Review and customize templates in docs/ai/');
+  ui.text(`  • Review and customize templates in ${docsDir}/`);
   ui.text('  • Your AI environments are ready to use with the generated configurations');
   ui.text('  • Run `ai-devkit phase <name>` to add more phases later');
   ui.text('  • Run `ai-devkit init` again to add more environments\n');

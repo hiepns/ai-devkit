@@ -16,28 +16,21 @@ npx ai-devkit@latest init
 
 This launches an interactive setup wizard that configures your project for AI-assisted development in under a minute.
 
-## What's Included
-
-| Package | Description |
-|---------|-------------|
-| [**ai-devkit (CLI)**](./packages/cli) | Scaffold structured docs, configure AI environments, and manage development phases |
-| [**@ai-devkit/memory**](./packages/memory) | Give agents persistent, searchable long-term memory via MCP |
-
 ## Supported Agents
 
-| Agent | Status |
-|-------|--------|
-| [Claude Code](https://www.anthropic.com/claude-code) | ✅ Supported |
-| [GitHub Copilot](https://code.visualstudio.com/) | ✅ Supported |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Supported |
-| [Cursor](https://cursor.sh/) | ✅ Supported |
-| [opencode](https://opencode.ai/) | ✅ Supported |
-| [Antigravity](https://antigravity.google/) | ✅ Supported |
-| [Codex CLI](https://github.com/openai/codex) | ✅ Supported |
-| [Windsurf](https://windsurf.com/) | 🚧 Testing |
-| [Kilo Code](https://github.com/Kilo-Org/kilocode) | 🚧 Testing |
-| [Roo Code](https://roocode.com/) | 🚧 Testing |
-| [Amp](https://ampcode.com/) | 🚧 Testing |
+| Agent | Agent Setup Support | Agent Control Support |
+|-------|---------------------|-----------------------|
+| [Claude Code](https://www.anthropic.com/claude-code) | ✅ Supported | ✅ Ready |
+| [GitHub Copilot](https://code.visualstudio.com/) | ✅ Supported | ❌ Not Ready |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Supported | ✅ Ready |
+| [Cursor](https://cursor.sh/) | ✅ Supported | ❌ Not Ready |
+| [opencode](https://opencode.ai/) | ✅ Supported | ❌ Not Ready |
+| [Antigravity](https://antigravity.google/) | ✅ Supported | ❌ Not Ready |
+| [Codex CLI](https://github.com/openai/codex) | ✅ Supported | ✅ Ready |
+| [Windsurf](https://windsurf.com/) | 🚧 Testing | ❌ Not Ready |
+| [Kilo Code](https://github.com/Kilo-Org/kilocode) | 🚧 Testing | ❌ Not Ready |
+| [Roo Code](https://roocode.com/) | 🚧 Testing | ❌ Not Ready |
+| [Amp](https://ampcode.com/) | ✅ Supported | ❌ Not Ready |
 
 ## Documentation
 

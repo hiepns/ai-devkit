@@ -1,11 +1,13 @@
 import { z } from 'zod';
-import { ConfigSkill, EnvironmentCode, Phase, AVAILABLE_PHASES } from '../types';
+import { ConfigSkill, EnvironmentCode, McpServerDefinition, Phase, AVAILABLE_PHASES } from '../types';
 import { isValidEnvironmentCode } from './env';
 
 export interface InstallConfigData {
   environments: EnvironmentCode[];
   phases: Phase[];
+  registries: Record<string, string>;
   skills: ConfigSkill[];
+  mcpServers: Record<string, McpServerDefinition>;
 }
 
 const skillEntrySchema = z.object({
@@ -30,6 +32,9 @@ const skillEntrySchema = z.object({
 });
 
 const installConfigSchema = z.object({
+  paths: z.object({
+    docs: z.string().trim().min(1).optional()
+  }).optional(),
   environments: z.array(z.string()).optional().default([]).superRefine((values, ctx) => {
     values.forEach((value, index) => {
       if (!isValidEnvironmentCode(value)) {
@@ -42,7 +47,16 @@ const installConfigSchema = z.object({
     });
   }).transform(values => dedupe(values) as EnvironmentCode[]),
   phases: z.array(z.string()).optional(),
-  skills: z.array(skillEntrySchema).optional().default([])
+  registries: z.record(z.string(), z.string()).optional().default({}),
+  skills: z.array(skillEntrySchema).optional().default([]),
+  mcpServers: z.record(z.string(), z.object({
+    transport: z.enum(['stdio', 'http', 'sse']),
+    command: z.string().optional(),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    url: z.string().optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+  })).optional().default({})
 }).transform((data, ctx) => {
   const phaseValues = data.phases ?? [];
 
@@ -59,7 +73,9 @@ const installConfigSchema = z.object({
   return {
     environments: data.environments,
     phases: dedupe(phaseValues) as Phase[],
-    skills: dedupeSkills(data.skills)
+    registries: data.registries,
+    skills: dedupeSkills(data.skills),
+    mcpServers: data.mcpServers as Record<string, McpServerDefinition>
   };
 });
 
@@ -107,6 +123,15 @@ function formatPath(pathParts: Array<string | number>): string {
 
 function dedupe<T>(values: T[]): T[] {
   return [...new Set(values)];
+}
+
+export function filterStringRecord(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(raw).filter(([, value]) => typeof value === 'string')
+  );
 }
 
 function dedupeSkills(skills: ConfigSkill[]): ConfigSkill[] {

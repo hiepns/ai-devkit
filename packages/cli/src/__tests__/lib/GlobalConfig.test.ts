@@ -7,6 +7,11 @@ jest.mock('fs-extra');
 jest.mock('os');
 jest.mock('path');
 
+jest.mock('../../util/terminal-ui', () => ({
+  ui: { warning: jest.fn(), info: jest.fn(), error: jest.fn(), text: jest.fn() },
+}));
+import { ui as mockUi } from '../../util/terminal-ui';
+
 describe('GlobalConfigManager', () => {
   let configManager: GlobalConfigManager;
   let mockFs: jest.Mocked<typeof fs>;
@@ -40,10 +45,8 @@ describe('GlobalConfigManager', () => {
 
     it('should return parsed config when file exists', async () => {
       const config = {
-        skills: {
-          registries: {
-            'my-org/skills': 'https://github.com/my-org/skills.git'
-          }
+        registries: {
+          'my-org/skills': 'https://github.com/my-org/skills.git'
         }
       };
 
@@ -63,7 +66,7 @@ describe('GlobalConfigManager', () => {
       const result = await configManager.read();
 
       expect(result).toBeNull();
-      expect(console.warn).toHaveBeenCalled();
+      expect(mockUi.warning).toHaveBeenCalled();
     });
   });
 
@@ -78,11 +81,9 @@ describe('GlobalConfigManager', () => {
 
     it('should return only string registry entries', async () => {
       const config = {
-        skills: {
-          registries: {
-            'my-org/skills': 'https://github.com/my-org/skills.git',
-            'bad/entry': 123
-          }
+        registries: {
+          'my-org/skills': 'https://github.com/my-org/skills.git',
+          'bad/entry': 123
         }
       };
 

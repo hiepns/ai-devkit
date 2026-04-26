@@ -9,6 +9,7 @@ import { installCommand } from './commands/install';
 import { registerMemoryCommand } from './commands/memory';
 import { registerSkillCommand } from './commands/skill';
 import { registerAgentCommand } from './commands/agent';
+import { registerChannelCommand } from './commands/channel';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { version } = require('../package.json') as { version: string };
 
@@ -26,6 +27,8 @@ program
   .option('-a, --all', 'Initialize all phases')
   .option('-p, --phases <phases>', 'Comma-separated list of phases to initialize')
   .option('-t, --template <path>', 'Initialize from template file (.yaml, .yml, .json)')
+  .option('-d, --docs-dir <path>', 'Custom directory for AI documentation (default: docs/ai)')
+  .option('--built-in', 'Install AI DevKit built-in skills without prompting (useful for CI/non-interactive runs)')
   .action(initCommand);
 
 program
@@ -56,5 +59,6 @@ program
 registerMemoryCommand(program);
 registerSkillCommand(program);
 registerAgentCommand(program);
+registerChannelCommand(program);
 
 program.parse();

@@ -1,15 +1,17 @@
 {
   "name": "ai-devkit",
-  "version": "0.15.0",
+  "version": "0.27.0",
   "private": true,
   "description": "A CLI toolkit for AI-assisted software development with phase templates and environment setup",
   "scripts": {
     "nx": "nx",
+    "prepare": "husky",
     "build": "nx run-many -t build",
     "lint": "nx run-many -t lint",
     "test": "nx run-many -t test",
     "test:watch": "nx run-many -t test --watch",
-    "test:coverage": "nx run-many -t test --coverage"
+    "test:coverage": "nx run-many -t test --coverage",
+    "test:e2e": "jest --config e2e/jest.config.js"
   },
   "workspaces": [
     "apps/*",
@@ -27,9 +29,10 @@
   "license": "MIT",
   "devDependencies": {
     "@nx/js": "^22.4.0",
+    "husky": "^9.1.7",
     "nx": "^22.4.0"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=20.20.0"
   }
 }

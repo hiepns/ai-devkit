@@ -5,6 +5,212 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0] - 2026-04-25
+
+### Fixed
+
+- **Check Status Path Traversal** - Validated `FEATURE` argument in `check-status.sh` to prevent path traversal (#66).
+- **Shell Injection in TerminalFocusManager** - Fixed `execAsync` calls to use array arguments instead of string interpolation, preventing potential shell injection.
+
+### Changed
+
+- **SkillManager Refactor** - Split `SkillManager` into dedicated `SkillIndex` and `SkillRegistry` modules for better separation of concerns.
+- **ClaudeCodeAdapter Refactor** - Extracted session parsing logic from `ClaudeCodeAdapter` into a standalone `ClaudeSessionParser` utility.
+- **Centralized Error Handling** - Added `withErrorHandler` utility for consistent error handling across CLI commands (`agent`, `channel`, `memory`, `skill`).
+- **AgentManager getAdapter** - Added `getAdapter()` method to `AgentManager`, reducing adapter resolution duplication in CLI commands.
+- **Standardized Error Types** - Updated all try-catch blocks to use `unknown` error type for type safety.
+- **Environment Code Consistency** - Renamed environment code references for consistency across CLI (`init`, `Config`, `EnvironmentSelector`, `TemplateManager`).
+- **Code Cleanup** - Removed stray `console.log` statements, cleaned up tests, and added `.editorconfig`.
+
+## [0.26.0] - 2026-04-22
+
+### Added
+
+- **Gemini CLI Agent Adapter** - Added `GeminiCliAdapter` to the agent manager so `ai-devkit agent list` and `ai-devkit agent detail` can discover and inspect running Gemini CLI sessions, with process detection, session discovery via `projectHash` matching, and content normalization for Gemini's polymorphic message format (#70).
+- **Gemini CLI Channel Support** - Added `GeminiCliAdapter` to the `channel` command for Gemini CLI channel operations.
+
+### Fixed
+
+- **Shell Injection Prevention** - Hardened git utility functions against shell injection.
+- **Skill Path Validation** - Added validation for skill paths to prevent invalid path traversal in `SkillManager`.
+
+### Changed
+
+- **Removed Redundant Commands** - Cleaned up duplicate command templates (`capture-knowledge`, `debug`, `simplify-implementation`) from both root `commands/` and `packages/cli/templates/commands/`.
+
+## [0.25.0] - 2026-04-21
+
+### Fixed
+
+- **Agent Manager Terminal.app Detection** - Fixed Terminal.app detection in the agent manager.
+- **Agent Manager iTerm Sending** - Fixed sending input to agents in iTerm.
+
+## [0.24.0] - 2026-04-18
+
+### Changed
+
+- **Flat Config Structure** - Moved `registries` and `skills` to top-level fields in project, global, and template configs. Previously `registries` was nested under `skills` (`skills.registries`); now both `registries` and `skills` sit at the same level for consistency across all config contexts.
+- **Template Registries Support** - Init templates can now declare custom `registries` that get saved to the project config during `ai-devkit init --template`.
+- **Shared Registry Filter** - Extracted duplicate registry-filtering logic from `ConfigManager` and `GlobalConfigManager` into a shared `filterStringRecord()` helper.
+- **Removed Dead Code** - Removed unused `getInstalledSkills()` method, `normalizeSkillsConfig()` method, `SkillsConfig` interface, and `SkillRegistriesConfig` interface.
+
+### Breaking Changes
+
+- The `skills` field in `.ai-devkit.json` is now always a plain array of `{ registry, name }` objects. The previous object format (`{ registries: {...}, installed: [...] }`) is no longer supported.
+- The global config (`~/.ai-devkit/.ai-devkit.json`) now uses a top-level `registries` field instead of `skills.registries`.
+
+## [0.23.1] - 2026-04-17
+
+### Fixed
+
+- **Skill Remove Config Cleanup** - Fixed `skill remove` not removing the skill entry from `.ai-devkit.json`.
+- **Install Update Guard** - Fixed install service updating config when there are no successful installs.
+- **Install Skills Update Guard** - Fixed install service including skills in the update object when there are no successful skills.
+- **Install Skills Object Format** - Fixed `install` failing when the `skills` field in config is an object with an `installed` array rather than a plain array.
+
+## [0.23.0] - 2026-04-17
+
+### Added
+
+- **MCP Server Config Standardization** - Added `mcpServers` support to `init` and `install` flows with environment-specific generators (`ClaudeCodeMcpGenerator`, `CodexMcpGenerator`) for standardized MCP server config across AI agents (#61).
+- **Channel Debug Flag** - Added `--debug` flag to the `channel` command for verbose debugging output.
+
+### Fixed
+
+- **Memory MCP Tool Names** - Renamed MCP tool names from dot-separated (`memory.storeKnowledge`) to underscore-separated (`memory_storeKnowledge`, `memory_updateKnowledge`, `memory_searchKnowledge`) to comply with strict MCP client naming regex `^[a-zA-Z0-9_-]{1,64}$`; backward-compat aliases retained for existing users (#59).
+- **Skill Add With No Environments** - Fixed `skill add` crashing when no environments are defined in config.
+- **Config addSkill Crash** - Fixed `addSkill()` crashing when the `skills` field is an object containing a `registries` key rather than an array.
+
+## [0.22.0] - 2026-04-12
+
+### Added
+
+- **Channel Connector Package** - Added new `@ai-devkit/channel-connector` package with channel management, config storage, and Telegram adapter support, plus CLI commands for channel operations (#53).
+- **Channel Connector Release Workflow** - Added publish workflow and package ignore rules for releasing the channel connector package.
+- **Codex Plugin Config** - Added `.codex-plugin/plugin.json` configuration.
+- **Dev Lifecycle Guide** - Added web documentation for the dev-lifecycle skill.
+- **Shopify Toolkit Registry Entry** - Added the Shopify toolkit skill to the registry.
+- **Git Hooks** - Added Husky `pre-commit` and `pre-push` hooks.
+
+### Changed
+
+- **Memory Skill Workflow** - Improved the memory skill workflow and updated the OpenAI agent configuration used by the skill.
+- **Dev Lifecycle Brainstorming** - Updated the dev-lifecycle `new-requirement` guidance to include brainstorming refinements.
+- **Code Review Guidance** - Refreshed code review instructions across command templates and dev-lifecycle references.
+- **CLI Environment Support** - Added Amp Code environment configuration support and updated related CLI expectations.
+
+## [0.21.1] - 2026-04-04
+
+### Fixed
+
+- **Interactive Skill Add Parsing** - Fixed `ai-devkit skill add <registry>` so it no longer requires `skill-name` and can open the interactive skill selection flow.
+
+## [0.21.0] - 2026-04-04
+
+### Added
+
+- **Interactive Skill Selection** - `ai-devkit skill add` can now present an interactive multi-select flow when adding skills from a registry (#51).
+- **Memory DB Path Configuration** - Added support for configuring a project-specific memory database path and using it in CLI and memory API flows (#50).
+- **Senior Engineer Skills** - Added `verify` and `tdd` skills and included them in the `senior-engineer` template.
+- **Targeted Global Skill Install Prompt** - Added environment-aware prompting to support targeted global skill installation.
+- **E2E Coverage** - Added end-to-end test coverage for the new memory database path configuration flow.
+
+### Changed
+
+- **Skill Guidance** - Updated memory skill instructions and refreshed skill red-flag guidance.
+- **Bundled Skills Data** - Added new bundled skills and updated skill registry metadata.
+- **E2E Test Maintenance** - Cleaned up the end-to-end test suite for the new CLI flows.
+
+### Fixed
+
+- **Ora Compatibility** - Fixed the `ora` dependency/version issue.
+
+## [0.20.1] - 2026-03-13
+
+### Added
+
+- **Agent Orchestration Skill** - New `agent-orchestration` skill for coordinating multi-agent workflows, including OpenAI agent configuration.
+
+### Changed
+
+- **TTY Writer** - Fixed sending enter separately for more reliable agent input delivery.
+- **Dependency Updates** - Upgraded project dependencies.
+- **Analytics Config** - Disabled Nx analytics in project configuration.
+
+## [0.20.0] - 2026-03-12
+
+### Added
+
+- **Agent Detail Command** - New `ai-devkit agent detail --id <name>` command to inspect running agent conversations (#49).
+- **Skill Registry** - Added `samber/cc-skills-golang` skill repository.
+
+### Changed
+
+- **Agent Identifier** - Updated agent identifier; removed `slug` field from `AgentInfo` in favor of simplified name-based matching.
+
+## [0.19.0] - 2026-03-11
+
+### Added
+
+- **Agent List CWD** - Agent list command now displays the current working directory for each running agent (#47).
+- **Clarification & Brainstorming Loop** - Added clarification and brainstorming loop to `review-design` and `review-requirements` commands.
+
+### Changed
+
+- **Generalized Session Mapping** - Refactored process-to-session mapping into shared utilities (`matching`, `session`, `process`) used by both Claude Code and Codex adapters, replacing adapter-specific implementations (#45).
+- **Claude Sessions PID Matching** - Updated Claude Code session matching for more reliable PID-based detection (#48).
+
+## [0.18.0] - 2026-03-10
+
+### Added
+
+- **Custom Docs Directory** - Added support for configuring a custom AI documentation directory via `paths.docs` and `ai-devkit init --docs-dir <path>`.
+
+### Changed
+
+- **Claude Code Adapter** - Reimplemented Claude Code session matching to use process start times, bounded session scanning, and direct session-based summaries for more reliable agent detection.
+- **Node.js Requirement** - Updated the minimum supported Node.js version to `20.20.0`.
+
+### Fixed
+
+- **Codex Cross-Repo Matching** - Prevented Codex agent session matching from incorrectly attaching sessions across repositories.
+- **Git Passphrase Prompts** - Fixed skill registry git operations so passphrase input works correctly during clone and update flows.
+
+## [0.17.0] - 2026-03-09
+
+### Added
+
+- **Agent Send Command** - New `ai-devkit agent send` command for sending input to running agents via TTY writer.
+- **Agent Type Display** - Agent list now shows agent type (e.g., Claude Code, Codex) in the listing output.
+
+### Changed
+
+- **Worktrees Location** - Updated dev-lifecycle skill worktree setup references.
+
+## [0.16.0] - 2026-02-27
+
+### Added
+
+- **Codex Adapter** - Added Codex adapter support.
+- **Agent Manager Package** - Added standalone `@ai-devkit/agent-manager` package.
+
+### Changed
+
+- **CLI Agent Migration** - Migrated `agent` command to `@ai-devkit/agent-manager`.
+- **Skill Registry Priority** - Updated skill registry priority handling.
+- **Init/Install Templates** - Stopped copying context templates during `init`/`install`.
+- **Version Output Source** - `--version` now uses package version output.
+- **Documentation** - Updated docs and improved web agent setup guide with template-based init.
+- **Project Templates** - Added and updated templates used across setup flows.
+- **Install Validation** - Added install smoke-test updates for `ai-devkit install`.
+
+### Fixed
+
+- **Agent List Display** - Kept the `working-on` column to one line in agent list output.
+- **Claude PID Session Mapping** - Prefer exact history cwd for Claude pid-session mapping.
+- **Config Manager Phase Handling** - Guarded missing phases in config manager.
+- **Docs Typos/Troubleshooting** - Fixed typo and added Codex sandbox `npx` troubleshooting FAQ.
+
 ## [0.15.0] - 2026-02-24
 
 ### Added
@@ -121,7 +327,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Comprehensive Documentation** - Added extensive documentation pages for:
   - Getting Started guide
   - Supported AI agents reference
-  - Development with AI DevKit 
+  - Development with AI DevKit
   - Debug workflows
   - Understanding existing code
   - Memory service usage

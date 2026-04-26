@@ -1,7 +1,7 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import YAML from 'yaml';
-import { AVAILABLE_PHASES, EnvironmentCode, Phase } from '../types';
+import { AVAILABLE_PHASES, EnvironmentCode, MCP_TRANSPORTS, McpServerDefinition, McpTransport, Phase } from '../types';
 import { isValidEnvironmentCode } from '../util/env';
 
 export interface InitTemplateSkill {
@@ -11,12 +11,17 @@ export interface InitTemplateSkill {
 
 export interface InitTemplateConfig {
   version?: number | string;
+  paths?: {
+    docs?: string;
+  };
   environments?: EnvironmentCode[];
   phases?: Phase[];
+  registries?: Record<string, string>;
   skills?: InitTemplateSkill[];
+  mcpServers?: Record<string, McpServerDefinition>;
 }
 
-const ALLOWED_TEMPLATE_FIELDS = new Set(['version', 'environments', 'phases', 'skills']);
+const ALLOWED_TEMPLATE_FIELDS = new Set(['version', 'paths', 'environments', 'phases', 'registries', 'skills', 'mcpServers']);
 
 function validationError(templatePath: string, message: string): Error {
   return new Error(`Invalid template at ${templatePath}: ${message}`);
@@ -81,6 +86,19 @@ function validateTemplate(raw: unknown, resolvedPath: string): InitTemplateConfi
     result.version = candidate.version;
   }
 
+  if (candidate.paths !== undefined) {
+    if (typeof candidate.paths !== 'object' || candidate.paths === null || Array.isArray(candidate.paths)) {
+      throw validationError(resolvedPath, '"paths" must be an object');
+    }
+    const paths = candidate.paths as Record<string, unknown>;
+    if (paths.docs !== undefined) {
+      if (typeof paths.docs !== 'string' || paths.docs.trim().length === 0) {
+        throw validationError(resolvedPath, '"paths.docs" must be a non-empty string');
+      }
+      result.paths = { docs: paths.docs.trim() };
+    }
+  }
+
   if (candidate.environments !== undefined) {
     if (!Array.isArray(candidate.environments)) {
       throw validationError(resolvedPath, '"environments" must be an array of environment codes');
@@ -122,6 +140,10 @@ function validateTemplate(raw: unknown, resolvedPath: string): InitTemplateConfi
     });
   }
 
+  if (candidate.registries !== undefined) {
+    result.registries = validateStringRecord(candidate.registries, 'registries', resolvedPath);
+  }
+
   if (candidate.skills !== undefined) {
     if (!Array.isArray(candidate.skills)) {
       throw validationError(resolvedPath, '"skills" must be an array of skill objects');
@@ -150,7 +172,88 @@ function validateTemplate(raw: unknown, resolvedPath: string): InitTemplateConfi
     });
   }
 
+  if (candidate.mcpServers !== undefined) {
+    result.mcpServers = validateMcpServers(candidate.mcpServers, resolvedPath);
+  }
+
   return result;
+}
+
+function validateStringRecord(
+  value: unknown,
+  fieldPath: string,
+  resolvedPath: string
+): Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw validationError(resolvedPath, `"${fieldPath}" must be an object of string values`);
+  }
+  const record = value as Record<string, unknown>;
+  for (const [key, val] of Object.entries(record)) {
+    if (typeof val !== 'string') {
+      throw validationError(resolvedPath, `"${fieldPath}.${key}" must be a string`);
+    }
+  }
+  return record as Record<string, string>;
+}
+
+function validateMcpServers(
+  raw: unknown,
+  resolvedPath: string
+): Record<string, McpServerDefinition> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw validationError(resolvedPath, '"mcpServers" must be an object');
+  }
+
+  const servers = raw as Record<string, unknown>;
+  const validated: Record<string, McpServerDefinition> = {};
+
+  for (const [name, value] of Object.entries(servers)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw validationError(resolvedPath, `"mcpServers.${name}" must be an object`);
+    }
+
+    const server = value as Record<string, unknown>;
+    const prefix = `mcpServers.${name}`;
+
+    if (typeof server.transport !== 'string' || !MCP_TRANSPORTS.includes(server.transport as McpTransport)) {
+      throw validationError(resolvedPath, `"${prefix}.transport" must be one of: ${MCP_TRANSPORTS.join(', ')}`);
+    }
+
+    const transport = server.transport as McpTransport;
+    const def: McpServerDefinition = { transport };
+
+    if (transport === 'stdio') {
+      if (typeof server.command !== 'string' || server.command.trim().length === 0) {
+        throw validationError(resolvedPath, `"${prefix}.command" is required for stdio transport`);
+      }
+      def.command = server.command.trim();
+
+      if (server.args !== undefined) {
+        if (!Array.isArray(server.args) || !server.args.every((a: unknown) => typeof a === 'string')) {
+          throw validationError(resolvedPath, `"${prefix}.args" must be an array of strings`);
+        }
+        def.args = server.args as string[];
+      }
+
+      if (server.env !== undefined) {
+        def.env = validateStringRecord(server.env, `${prefix}.env`, resolvedPath);
+      }
+    } else {
+      // http or sse
+      if (typeof server.url !== 'string' || server.url.trim().length === 0) {
+        throw validationError(resolvedPath, `"${prefix}.url" is required for ${transport} transport`);
+      }
+      def.url = server.url.trim();
+
+      if (server.headers !== undefined) {
+        def.headers = validateStringRecord(server.headers, `${prefix}.headers`, resolvedPath);
+      }
+    }
+
+    validated[name] = def;
+  }
+
+  return validated;
 }
 
 export async function loadInitTemplate(templatePath: string): Promise<InitTemplateConfig> {

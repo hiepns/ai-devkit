@@ -13,19 +13,31 @@ export interface EnvironmentDefinition {
   contextFileName: string;
   commandPath: string;
   skillPath?: string;
+  globalSkillPath?: string;
   description?: string;
   isCustomCommandPath?: boolean;
   customCommandExtension?: string;
   globalCommandPath?: string;
+  mcpConfigPath?: string;
 }
 
 export type EnvironmentCode = 'cursor' | 'claude' | 'github' | 'gemini' | 'codex' | 'windsurf' | 'kilocode' | 'amp' | 'opencode' | 'roo' | 'antigravity';
 
+export const DEFAULT_DOCS_DIR = 'docs/ai';
+
 export interface DevKitConfig {
   version: string;
+  paths?: {
+    docs?: string;
+  };
+  memory?: {
+    path?: string;
+  };
   environments: EnvironmentCode[];
   phases: Phase[];
+  registries?: Record<string, string>;
   skills?: ConfigSkill[];
+  mcpServers?: Record<string, McpServerDefinition>;
   createdAt: string;
   updatedAt: string;
 }
@@ -35,12 +47,21 @@ export interface ConfigSkill {
   name: string;
 }
 
-export interface SkillRegistriesConfig {
-  registries?: Record<string, string>;
+export type McpTransport = 'stdio' | 'http' | 'sse';
+
+export const MCP_TRANSPORTS: McpTransport[] = ['stdio', 'http', 'sse'];
+
+export interface McpServerDefinition {
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
 }
 
 export interface GlobalDevKitConfig {
-  skills?: SkillRegistriesConfig;
+  registries?: Record<string, string>;
 }
 
 export interface PhaseMetadata {
