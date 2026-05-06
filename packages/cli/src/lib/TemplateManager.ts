@@ -2,21 +2,29 @@ import * as fs from "fs-extra";
 import * as path from "path";
 import * as os from "os";
 import matter from "gray-matter";
-import { Phase, EnvironmentCode, EnvironmentDefinition } from "../types";
+import { Phase, EnvironmentCode, EnvironmentDefinition, DEFAULT_DOCS_DIR } from "../types";
+import { ui } from "../util/terminal-ui";
 import { getEnvironment } from "../util/env";
+
+export interface TemplateManagerOptions {
+  targetDir?: string;
+  docsDir?: string;
+}
 
 export class TemplateManager {
   private templatesDir: string;
   private targetDir: string;
+  private docsDir: string;
 
-  constructor(targetDir: string = process.cwd()) {
+  constructor(options: TemplateManagerOptions = {}) {
     this.templatesDir = path.join(__dirname, "../../templates");
-    this.targetDir = targetDir;
+    this.targetDir = options.targetDir ?? process.cwd();
+    this.docsDir = options.docsDir ?? DEFAULT_DOCS_DIR;
   }
 
   async copyPhaseTemplate(phase: Phase): Promise<string> {
     const sourceFile = path.join(this.templatesDir, "phases", `${phase}.md`);
-    const targetDir = path.join(this.targetDir, "docs", "ai", phase);
+    const targetDir = path.join(this.targetDir, this.docsDir, phase);
     const targetFile = path.join(targetDir, "README.md");
 
     await fs.ensureDir(targetDir);
@@ -28,8 +36,7 @@ export class TemplateManager {
   async fileExists(phase: Phase): Promise<boolean> {
     const targetFile = path.join(
       this.targetDir,
-      "docs",
-      "ai",
+      this.docsDir,
       phase,
       "README.md"
     );
@@ -37,14 +44,14 @@ export class TemplateManager {
   }
 
   async setupMultipleEnvironments(
-    environmentIds: EnvironmentCode[]
+    environmentCodes: EnvironmentCode[]
   ): Promise<string[]> {
     const copiedFiles: string[] = [];
 
-    for (const envId of environmentIds) {
-      const env = getEnvironment(envId);
+    for (const envCode of environmentCodes) {
+      const env = getEnvironment(envCode);
       if (!env) {
-        console.warn(`Warning: Environment '${envId}' not found, skipping`);
+        ui.warning(`Environment '${envCode}' not found, skipping`);
         continue;
       }
 
@@ -52,7 +59,7 @@ export class TemplateManager {
         const envFiles = await this.setupSingleEnvironment(env);
         copiedFiles.push(...envFiles);
       } catch (error) {
-        console.error(`Error setting up environment '${env.name}':`, error);
+        ui.error(`Error setting up environment '${env.name}': ${error instanceof Error ? error.message : String(error)}`);
         throw error; // Re-throw to stop the entire process on failure
       }
     }
@@ -60,20 +67,17 @@ export class TemplateManager {
     return copiedFiles;
   }
 
-  async checkEnvironmentExists(envId: EnvironmentCode): Promise<boolean> {
-    const env = getEnvironment(envId);
+  async checkEnvironmentExists(envCode: EnvironmentCode): Promise<boolean> {
+    const env = getEnvironment(envCode);
 
     if (!env) {
       return false;
     }
 
-    const contextFilePath = path.join(this.targetDir, env.contextFileName);
-    const contextFileExists = await fs.pathExists(contextFilePath);
-
     const commandDirPath = path.join(this.targetDir, env.commandPath);
     const commandDirExists = await fs.pathExists(commandDirPath);
 
-    return contextFileExists || commandDirExists;
+    return commandDirExists;
   }
 
   private async setupSingleEnvironment(
@@ -82,16 +86,6 @@ export class TemplateManager {
     const copiedFiles: string[] = [];
 
     try {
-      const contextSource = path.join(this.templatesDir, "env", "base.md");
-      const contextTarget = path.join(this.targetDir, env.contextFileName);
-
-      if (await fs.pathExists(contextSource)) {
-        await fs.copy(contextSource, contextTarget);
-        copiedFiles.push(contextTarget);
-      } else {
-        console.warn(`Warning: Context file not found: ${contextSource}`);
-      }
-
       if (!env.isCustomCommandPath) {
         await this.copyCommands(env, copiedFiles);
       }
@@ -107,7 +101,7 @@ export class TemplateManager {
           break;
       }
     } catch (error) {
-      console.error(`Error setting up environment ${env.name}:`, error);
+      ui.error(`Error setting up environment '${env.name}': ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
 
@@ -131,17 +125,20 @@ export class TemplateManager {
           .filter((file: string) => file.endsWith(".md"))
           .map(async (file: string) => {
             const targetFile = file.replace('.md', commandExtension);
-            await fs.copy(
+            const content = await fs.readFile(
               path.join(commandsSourceDir, file),
-              path.join(commandsTargetDir, targetFile)
+              "utf-8"
+            );
+            const replaced = this.replaceDocsDir(content);
+            await fs.writeFile(
+              path.join(commandsTargetDir, targetFile),
+              replaced
             );
             copiedFiles.push(path.join(commandsTargetDir, targetFile));
           })
       );
     } else {
-      console.warn(
-        `Warning: Commands directory not found: ${commandsSourceDir}`
-      );
+      ui.warning(`Commands directory not found: ${commandsSourceDir}`);
     }
   }
 
@@ -180,7 +177,8 @@ export class TemplateManager {
             path.join(this.templatesDir, "commands", file),
             "utf-8"
           );
-          const { data, content } = matter(mdContent);
+          const replaced = this.replaceDocsDir(mdContent);
+          const { data, content } = matter(replaced);
           const description = (data.description as string) || "";
           const tomlContent = this.generateTomlContent(description, content.trim());
           const tomlFile = file.replace(".md", ".toml");
@@ -209,6 +207,10 @@ prompt='''${escapedPrompt}'''
 `;
   }
 
+  private replaceDocsDir(content: string): string {
+    return content.split('{{docsDir}}').join(this.docsDir);
+  }
+
   /**
    * Copy command templates to the global folder for a specific environment.
    * Global folders are located in the user's home directory.
@@ -233,8 +235,10 @@ prompt='''${escapedPrompt}'''
 
         const sourceFile = path.join(commandsSourceDir, file);
         const targetFile = path.join(globalTargetDir, file);
+        const content = await fs.readFile(sourceFile, "utf-8");
+        const replaced = this.replaceDocsDir(content);
 
-        await fs.copy(sourceFile, targetFile);
+        await fs.writeFile(targetFile, replaced);
         copiedFiles.push(targetFile);
       }
     } catch (error) {

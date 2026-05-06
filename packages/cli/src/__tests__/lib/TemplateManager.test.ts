@@ -6,6 +6,11 @@ import { EnvironmentDefinition, Phase, EnvironmentCode } from '../../types';
 jest.mock('fs-extra');
 jest.mock('../../util/env');
 
+jest.mock('../../util/terminal-ui', () => ({
+  ui: { warning: jest.fn(), error: jest.fn(), info: jest.fn(), text: jest.fn() },
+}));
+import { ui as mockUi } from '../../util/terminal-ui';
+
 describe('TemplateManager', () => {
   let templateManager: TemplateManager;
   let mockFs: jest.Mocked<typeof fs>;
@@ -14,7 +19,7 @@ describe('TemplateManager', () => {
   beforeEach(() => {
     mockFs = fs as jest.Mocked<typeof fs>;
     mockGetEnvironment = require('../../util/env').getEnvironment as jest.MockedFunction<any>;
-    templateManager = new TemplateManager('/test/target');
+    templateManager = new TemplateManager({ targetDir: '/test/target' });
 
     jest.clearAllMocks();
   });
@@ -24,7 +29,7 @@ describe('TemplateManager', () => {
   });
 
   describe('setupSingleEnvironment', () => {
-    it('should copy context file when it exists', async () => {
+    it('should not copy context files', async () => {
       const env: EnvironmentDefinition = {
         code: 'test-env',
         name: 'Test Environment',
@@ -33,24 +38,19 @@ describe('TemplateManager', () => {
         isCustomCommandPath: false
       };
 
-      (mockFs.pathExists as any)
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(true);
+      (mockFs.pathExists as any).mockResolvedValueOnce(true);
 
       (mockFs.readdir as any).mockResolvedValue(['command1.md', 'command2.toml']);
+      (mockFs.readFile as any).mockResolvedValue('command content');
+      (mockFs.writeFile as any).mockResolvedValue(undefined);
 
       const result = await (templateManager as any).setupSingleEnvironment(env);
 
-      expect(mockFs.copy).toHaveBeenCalledWith(
-        path.join(templateManager['templatesDir'], 'env', 'base.md'),
-        path.join(templateManager['targetDir'], env.contextFileName)
-      );
-      expect(result).toContain(path.join(templateManager['targetDir'], env.contextFileName));
+      expect(mockFs.writeFile).toHaveBeenCalledTimes(1);
+      expect(result).toEqual([path.join(templateManager['targetDir'], env.commandPath, 'command1.md')]);
     });
 
-    it('should warn when context file does not exist', async () => {
-      const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
-
+    it('should not warn for missing context file', async () => {
       const env: EnvironmentDefinition = {
         code: 'test-env',
         name: 'Test Environment',
@@ -59,20 +59,16 @@ describe('TemplateManager', () => {
         isCustomCommandPath: false
       };
 
-      (mockFs.pathExists as any)
-        .mockResolvedValueOnce(false)
-        .mockResolvedValueOnce(true);
+      (mockFs.pathExists as any).mockResolvedValueOnce(true);
 
       (mockFs.readdir as any).mockResolvedValue(['command1.md']);
+      (mockFs.readFile as any).mockResolvedValue('command content');
+      (mockFs.writeFile as any).mockResolvedValue(undefined);
 
       const result = await (templateManager as any).setupSingleEnvironment(env);
 
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Warning: Context file not found')
-      );
+      expect(mockUi.warning).not.toHaveBeenCalled();
       expect(result).toEqual([path.join(templateManager['targetDir'], env.commandPath, 'command1.md')]);
-
-      consoleWarnSpy.mockRestore();
     });
 
     it('should copy commands when isCustomCommandPath is false', async () => {
@@ -86,11 +82,11 @@ describe('TemplateManager', () => {
 
       const mockCommandFiles = ['command1.md', 'command2.toml', 'command3.md'];
 
-      (mockFs.pathExists as any)
-        .mockResolvedValueOnce(true) // context file exists
-        .mockResolvedValueOnce(true); // commands directory exists
+      (mockFs.pathExists as any).mockResolvedValueOnce(true); // commands directory exists
 
       (mockFs.readdir as any).mockResolvedValue(mockCommandFiles);
+      (mockFs.readFile as any).mockResolvedValue('command content');
+      (mockFs.writeFile as any).mockResolvedValue(undefined);
 
       const result = await (templateManager as any).setupSingleEnvironment(env);
 
@@ -98,18 +94,41 @@ describe('TemplateManager', () => {
         path.join(templateManager['targetDir'], env.commandPath)
       );
 
-      // Should only copy .md files (not .toml files)
-      expect(mockFs.copy).toHaveBeenCalledWith(
-        path.join(templateManager['templatesDir'], 'commands', 'command1.md'),
-        path.join(templateManager['targetDir'], env.commandPath, 'command1.md')
+      // Should only write .md files (not .toml files)
+      expect(mockFs.writeFile).toHaveBeenCalledWith(
+        path.join(templateManager['targetDir'], env.commandPath, 'command1.md'),
+        'command content'
       );
-      expect(mockFs.copy).toHaveBeenCalledWith(
-        path.join(templateManager['templatesDir'], 'commands', 'command3.md'),
-        path.join(templateManager['targetDir'], env.commandPath, 'command3.md')
+      expect(mockFs.writeFile).toHaveBeenCalledWith(
+        path.join(templateManager['targetDir'], env.commandPath, 'command3.md'),
+        'command content'
       );
 
       expect(result).toContain(path.join(templateManager['targetDir'], env.commandPath, 'command1.md'));
       expect(result).toContain(path.join(templateManager['targetDir'], env.commandPath, 'command3.md'));
+    });
+
+    it('should replace docs/ai with custom docsDir in command content', async () => {
+      const customManager = new TemplateManager({ targetDir: '/test/target', docsDir: '.ai-docs' });
+      const env: EnvironmentDefinition = {
+        code: 'test-env',
+        name: 'Test Environment',
+        contextFileName: '.test-context.md',
+        commandPath: '.test',
+        isCustomCommandPath: false
+      };
+
+      (mockFs.pathExists as any).mockResolvedValueOnce(true);
+      (mockFs.readdir as any).mockResolvedValue(['command1.md']);
+      (mockFs.readFile as any).mockResolvedValue('Review {{docsDir}}/design/feature-{name}.md and {{docsDir}}/requirements/.');
+      (mockFs.writeFile as any).mockResolvedValue(undefined);
+
+      await (customManager as any).setupSingleEnvironment(env);
+
+      expect(mockFs.writeFile).toHaveBeenCalledWith(
+        path.join(customManager['targetDir'], env.commandPath, 'command1.md'),
+        'Review .ai-docs/design/feature-{name}.md and .ai-docs/requirements/.'
+      );
     });
 
     it('should skip commands when isCustomCommandPath is true', async () => {
@@ -121,13 +140,11 @@ describe('TemplateManager', () => {
         isCustomCommandPath: true
       };
 
-      (mockFs.pathExists as any).mockResolvedValueOnce(true);
-
       const result = await (templateManager as any).setupSingleEnvironment(env);
 
       expect(mockFs.ensureDir).not.toHaveBeenCalled();
-      expect(mockFs.copy).toHaveBeenCalledTimes(1);
-      expect(result).toContain(path.join(templateManager['targetDir'], env.contextFileName));
+      expect(mockFs.copy).not.toHaveBeenCalled();
+      expect(result).toEqual([]);
     });
 
     it('should handle cursor environment with special files', async () => {
@@ -142,7 +159,6 @@ describe('TemplateManager', () => {
       const mockRuleFiles = ['rule1.md', 'rule2.toml'];
 
       (mockFs.pathExists as any)
-        .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(true).mockResolvedValueOnce(true);
 
       (mockFs.readdir as any)
@@ -181,7 +197,6 @@ This is the prompt content.`;
 
       (mockFs.pathExists as any)
         .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(true);
 
       (mockFs.readdir as any).mockResolvedValue(mockCommandFiles);
@@ -208,8 +223,6 @@ This is the prompt content.`;
     });
 
     it('should handle errors and rethrow them', async () => {
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
-
       const env: EnvironmentDefinition = {
         code: 'test-env',
         name: 'Test Environment',
@@ -218,17 +231,14 @@ This is the prompt content.`;
         isCustomCommandPath: false
       };
 
-      const testError = new Error('Test error');
-      (mockFs.pathExists as any).mockRejectedValue(testError);
+      (mockFs.pathExists as any).mockResolvedValueOnce(true);
+      (mockFs.readdir as any).mockRejectedValue(new Error('Test error'));
 
       await expect((templateManager as any).setupSingleEnvironment(env)).rejects.toThrow('Test error');
 
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        'Error setting up environment Test Environment:',
-        testError
+      expect(mockUi.error).toHaveBeenCalledWith(
+        "Error setting up environment 'Test Environment': Test error"
       );
-
-      consoleErrorSpy.mockRestore();
     });
   });
 
@@ -249,6 +259,25 @@ This is the prompt content.`;
         path.join(templateManager['targetDir'], 'docs', 'ai', phase, 'README.md')
       );
       expect(result).toBe(path.join(templateManager['targetDir'], 'docs', 'ai', phase, 'README.md'));
+    });
+
+    it('should use custom docsDir when provided', async () => {
+      const customManager = new TemplateManager({ targetDir: '/test/target', docsDir: '.ai-docs' });
+      const phase: Phase = 'design';
+
+      (mockFs.ensureDir as any).mockResolvedValue(undefined);
+      (mockFs.copy as any).mockResolvedValue(undefined);
+
+      const result = await customManager.copyPhaseTemplate(phase);
+
+      expect(mockFs.ensureDir).toHaveBeenCalledWith(
+        path.join(customManager['targetDir'], '.ai-docs', phase)
+      );
+      expect(mockFs.copy).toHaveBeenCalledWith(
+        path.join(customManager['templatesDir'], 'phases', `${phase}.md`),
+        path.join(customManager['targetDir'], '.ai-docs', phase, 'README.md')
+      );
+      expect(result).toBe(path.join(customManager['targetDir'], '.ai-docs', phase, 'README.md'));
     });
   });
 
@@ -278,11 +307,25 @@ This is the prompt content.`;
       );
       expect(result).toBe(false);
     });
+
+    it('should check custom docsDir path when provided', async () => {
+      const customManager = new TemplateManager({ targetDir: '/test/target', docsDir: 'custom/docs' });
+      const phase: Phase = 'testing';
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+
+      const result = await customManager.fileExists(phase);
+
+      expect(mockFs.pathExists).toHaveBeenCalledWith(
+        path.join(customManager['targetDir'], 'custom/docs', phase, 'README.md')
+      );
+      expect(result).toBe(true);
+    });
   });
 
   describe('setupMultipleEnvironments', () => {
     it('should setup multiple environments successfully', async () => {
-      const envIds: EnvironmentCode[] = ['cursor', 'gemini'];
+      const envCodes: EnvironmentCode[] = ['cursor', 'gemini'];
       const cursorEnv = {
         code: 'cursor',
         name: 'Cursor',
@@ -309,7 +352,7 @@ This is the prompt content.`;
 
       (templateManager as any).setupSingleEnvironment = mockSetupSingleEnvironment;
 
-      const result = await templateManager.setupMultipleEnvironments(envIds);
+      const result = await templateManager.setupMultipleEnvironments(envCodes);
 
       expect(mockGetEnvironment).toHaveBeenCalledWith('cursor');
       expect(mockGetEnvironment).toHaveBeenCalledWith('gemini');
@@ -323,7 +366,7 @@ This is the prompt content.`;
     });
 
     it('should skip invalid environments and continue with valid ones', async () => {
-      const envIds: EnvironmentCode[] = ['cursor', 'invalid' as any, 'gemini'];
+      const envCodes: EnvironmentCode[] = ['cursor', 'invalid' as any, 'gemini'];
       const cursorEnv = {
         code: 'cursor',
         name: 'Cursor',
@@ -338,14 +381,11 @@ This is the prompt content.`;
         isCustomCommandPath: true,
       };
 
-      const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
-
       mockGetEnvironment
         .mockReturnValueOnce(cursorEnv)
         .mockReturnValueOnce(undefined) // invalid environment
         .mockReturnValueOnce(geminiEnv);
 
-      // Mock setupSingleEnvironment
       const mockSetupSingleEnvironment = jest.fn();
       mockSetupSingleEnvironment
         .mockResolvedValueOnce(['/path/to/cursor/file1'])
@@ -353,19 +393,17 @@ This is the prompt content.`;
 
       (templateManager as any).setupSingleEnvironment = mockSetupSingleEnvironment;
 
-      const result = await templateManager.setupMultipleEnvironments(envIds);
+      const result = await templateManager.setupMultipleEnvironments(envCodes);
 
-      expect(consoleWarnSpy).toHaveBeenCalledWith("Warning: Environment 'invalid' not found, skipping");
+      expect(mockUi.warning).toHaveBeenCalledWith("Environment 'invalid' not found, skipping");
       expect(result).toEqual([
         '/path/to/cursor/file1',
         '/path/to/gemini/file1'
       ]);
-
-      consoleWarnSpy.mockRestore();
     });
 
     it('should throw error when setupSingleEnvironment fails', async () => {
-      const envIds: EnvironmentCode[] = ['cursor'];
+      const envCodes: EnvironmentCode[] = ['cursor'];
       const cursorEnv = {
         code: 'cursor',
         name: 'Cursor',
@@ -378,30 +416,26 @@ This is the prompt content.`;
       const mockSetupSingleEnvironment = jest.fn().mockRejectedValue(new Error('Setup failed'));
       (templateManager as any).setupSingleEnvironment = mockSetupSingleEnvironment;
 
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+      await expect(templateManager.setupMultipleEnvironments(envCodes)).rejects.toThrow('Setup failed');
 
-      await expect(templateManager.setupMultipleEnvironments(envIds)).rejects.toThrow('Setup failed');
-
-      expect(consoleErrorSpy).toHaveBeenCalledWith("Error setting up environment 'Cursor':", expect.any(Error));
-
-      consoleErrorSpy.mockRestore();
+      expect(mockUi.error).toHaveBeenCalledWith("Error setting up environment 'Cursor': Setup failed");
     });
   });
 
   describe('checkEnvironmentExists', () => {
     it('should return false when environment does not exist', async () => {
-      const envId: EnvironmentCode = 'cursor';
+      const envCode: EnvironmentCode = 'cursor';
 
       mockGetEnvironment.mockReturnValue(undefined);
 
-      const result = await templateManager.checkEnvironmentExists(envId);
+      const result = await templateManager.checkEnvironmentExists(envCode);
 
-      expect(mockGetEnvironment).toHaveBeenCalledWith(envId);
+      expect(mockGetEnvironment).toHaveBeenCalledWith(envCode);
       expect(result).toBe(false);
     });
 
-    it('should return true when context file exists', async () => {
-      const envId: EnvironmentCode = 'cursor';
+    it('should return false when only context file exists', async () => {
+      const envCode: EnvironmentCode = 'cursor';
       const env = {
         code: 'cursor',
         name: 'Cursor',
@@ -411,23 +445,18 @@ This is the prompt content.`;
 
       mockGetEnvironment.mockReturnValue(env);
 
-      (mockFs.pathExists as any)
-        .mockResolvedValueOnce(true) // context file exists
-        .mockResolvedValueOnce(false); // command dir doesn't exist
+      (mockFs.pathExists as any).mockResolvedValueOnce(false); // command dir doesn't exist
 
-      const result = await templateManager.checkEnvironmentExists(envId);
+      const result = await templateManager.checkEnvironmentExists(envCode);
 
-      expect(mockFs.pathExists).toHaveBeenCalledWith(
-        path.join(templateManager['targetDir'], env.contextFileName)
-      );
       expect(mockFs.pathExists).toHaveBeenCalledWith(
         path.join(templateManager['targetDir'], env.commandPath)
       );
-      expect(result).toBe(true);
+      expect(result).toBe(false);
     });
 
     it('should return true when command directory exists', async () => {
-      const envId: EnvironmentCode = 'cursor';
+      const envCode: EnvironmentCode = 'cursor';
       const env = {
         code: 'cursor',
         name: 'Cursor',
@@ -437,17 +466,15 @@ This is the prompt content.`;
 
       mockGetEnvironment.mockReturnValue(env);
 
-      (mockFs.pathExists as any)
-        .mockResolvedValueOnce(false) // context file doesn't exist
-        .mockResolvedValueOnce(true); // command dir exists
+      (mockFs.pathExists as any).mockResolvedValueOnce(true); // command dir exists
 
-      const result = await templateManager.checkEnvironmentExists(envId);
+      const result = await templateManager.checkEnvironmentExists(envCode);
 
       expect(result).toBe(true);
     });
 
-    it('should return false when neither context file nor command directory exists', async () => {
-      const envId: EnvironmentCode = 'cursor';
+    it('should return false when command directory does not exist', async () => {
+      const envCode: EnvironmentCode = 'cursor';
       const env = {
         code: 'cursor',
         name: 'Cursor',
@@ -457,11 +484,9 @@ This is the prompt content.`;
 
       mockGetEnvironment.mockReturnValue(env);
 
-      (mockFs.pathExists as any)
-        .mockResolvedValueOnce(false) // context file doesn't exist
-        .mockResolvedValueOnce(false); // command dir doesn't exist
+      (mockFs.pathExists as any).mockResolvedValueOnce(false); // command dir doesn't exist
 
-      const result = await templateManager.checkEnvironmentExists(envId);
+      const result = await templateManager.checkEnvironmentExists(envCode);
 
       expect(result).toBe(false);
     });
@@ -657,12 +682,13 @@ description: Test
       mockGetEnvironment.mockReturnValue(envWithGlobal);
       (mockFs.ensureDir as any).mockResolvedValue(undefined);
       (mockFs.readdir as any).mockResolvedValue(mockCommandFiles);
-      (mockFs.copy as any).mockResolvedValue(undefined);
+      (mockFs.readFile as any).mockResolvedValue('command content');
+      (mockFs.writeFile as any).mockResolvedValue(undefined);
 
       const result = await templateManager.copyCommandsToGlobal('antigravity');
 
       expect(mockFs.ensureDir).toHaveBeenCalled();
-      expect(mockFs.copy).toHaveBeenCalledTimes(2); // Only .md files
+      expect(mockFs.writeFile).toHaveBeenCalledTimes(2); // Only .md files
       expect(result).toHaveLength(2);
     });
 
@@ -680,11 +706,12 @@ description: Test
       mockGetEnvironment.mockReturnValue(envWithGlobal);
       (mockFs.ensureDir as any).mockResolvedValue(undefined);
       (mockFs.readdir as any).mockResolvedValue(mockCommandFiles);
-      (mockFs.copy as any).mockResolvedValue(undefined);
+      (mockFs.readFile as any).mockResolvedValue('command content');
+      (mockFs.writeFile as any).mockResolvedValue(undefined);
 
       const result = await templateManager.copyCommandsToGlobal('codex');
 
-      expect(mockFs.copy).toHaveBeenCalledTimes(1);
+      expect(mockFs.writeFile).toHaveBeenCalledTimes(1);
       expect(result).toHaveLength(1);
     });
 

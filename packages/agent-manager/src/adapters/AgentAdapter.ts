@@ -45,12 +45,11 @@ export interface AgentInfo {
     /** Session UUID */
     sessionId: string;
 
-    /** Human-readable session name (e.g., "merry-wobbling-starlight"), may be undefined for new sessions */
-    slug?: string;
-
     /** Timestamp of last activity */
     lastActive: Date;
 
+    /** Path to the session JSONL file on disk */
+    sessionFilePath?: string;
 }
 
 /**
@@ -68,11 +67,23 @@ export interface ProcessInfo {
 
     /** Terminal TTY (e.g., "ttys030") */
     tty: string;
+
+    /** Process start time, populated by enrichProcesses */
+    startTime?: Date;
+}
+
+/**
+ * A single message in a conversation
+ */
+export interface ConversationMessage {
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    timestamp?: string;
 }
 
 /**
  * Agent Adapter Interface
- * 
+ *
  * Implementations must provide detection logic for a specific agent type.
  */
 export interface AgentAdapter {
@@ -91,4 +102,12 @@ export interface AgentAdapter {
      * @returns True if this adapter can handle the process
      */
     canHandle(processInfo: ProcessInfo): boolean;
+
+    /**
+     * Read the full conversation from a session file
+     * @param sessionFilePath Path to the session JSONL file
+     * @param options.verbose Include tool call/result details
+     * @returns Array of conversation messages
+     */
+    getConversation(sessionFilePath: string, options?: { verbose?: boolean }): ConversationMessage[];
 }

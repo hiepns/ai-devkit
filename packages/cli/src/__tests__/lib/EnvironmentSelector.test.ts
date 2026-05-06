@@ -3,6 +3,11 @@ import { getAllEnvironments } from '../../util/env';
 
 jest.mock('inquirer');
 
+jest.mock('../../util/terminal-ui', () => ({
+  ui: { warning: jest.fn(), info: jest.fn(), text: jest.fn(), breakline: jest.fn() },
+}));
+import { ui as mockUi } from '../../util/terminal-ui';
+
 describe('EnvironmentSelector', () => {
   let selector: EnvironmentSelector;
   let mockPrompt: jest.MockedFunction<any>;
@@ -114,38 +119,27 @@ describe('EnvironmentSelector', () => {
 
 
   describe('displaySelectionSummary', () => {
-    let consoleSpy: jest.SpyInstance;
-
-    beforeEach(() => {
-      consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => { });
-    });
-
-    afterEach(() => {
-      consoleSpy.mockRestore();
-    });
-
     it('should display nothing selected message for empty array', () => {
       selector.displaySelectionSummary([]);
 
-      expect(consoleSpy).toHaveBeenCalledWith('No environments selected.');
-      expect(consoleSpy).toHaveBeenCalledTimes(1);
+      expect(mockUi.warning).toHaveBeenCalledWith('No environments selected.');
     });
 
     it('should display selected environments with checkmarks', () => {
       selector.displaySelectionSummary(['cursor', 'claude']);
 
-      expect(consoleSpy).toHaveBeenCalledWith('\nSelected environments:');
-      expect(consoleSpy).toHaveBeenCalledWith('  Cursor');
-      expect(consoleSpy).toHaveBeenCalledWith('  Claude Code');
-      expect(consoleSpy).toHaveBeenCalledWith('');
+      expect(mockUi.text).toHaveBeenCalledWith('\nSelected environments:');
+      expect(mockUi.text).toHaveBeenCalledWith('  Cursor');
+      expect(mockUi.text).toHaveBeenCalledWith('  Claude Code');
+      expect(mockUi.breakline).toHaveBeenCalled();
     });
 
     it('should handle single environment selection', () => {
       selector.displaySelectionSummary(['cursor']);
 
-      expect(consoleSpy).toHaveBeenCalledWith('\nSelected environments:');
-      expect(consoleSpy).toHaveBeenCalledWith('  Cursor');
-      expect(consoleSpy).toHaveBeenCalledWith('');
+      expect(mockUi.text).toHaveBeenCalledWith('\nSelected environments:');
+      expect(mockUi.text).toHaveBeenCalledWith('  Cursor');
+      expect(mockUi.breakline).toHaveBeenCalled();
     });
   });
 
@@ -218,6 +212,40 @@ describe('EnvironmentSelector', () => {
       const choices = callArgs[0].choices;
 
       expect(choices).toHaveLength(2);
+    });
+  });
+
+  describe('selectGlobalSkillEnvironments', () => {
+    it('should create choices from global-skill-capable environments', async () => {
+      mockPrompt.mockResolvedValue({ environments: ['claude'] });
+
+      await selector.selectGlobalSkillEnvironments();
+
+      expect(mockPrompt).toHaveBeenCalledWith([
+        expect.objectContaining({
+          type: 'checkbox',
+          name: 'environments',
+          message: 'Select AI environments for global skill installation (use space to select, enter to confirm):',
+          choices: expect.arrayContaining([
+            expect.objectContaining({ value: 'cursor' }),
+            expect.objectContaining({ value: 'claude' }),
+            expect.objectContaining({ value: 'codex' }),
+            expect.objectContaining({ value: 'gemini' }),
+            expect.objectContaining({ value: 'opencode' }),
+            expect.objectContaining({ value: 'antigravity' })
+          ]),
+          validate: expect.any(Function)
+        })
+      ]);
+    });
+
+    it('should return selected global-skill environments', async () => {
+      const selectedEnvs = ['claude', 'codex'];
+      mockPrompt.mockResolvedValue({ environments: selectedEnvs });
+
+      const result = await selector.selectGlobalSkillEnvironments();
+
+      expect(result).toEqual(selectedEnvs);
     });
   });
 });

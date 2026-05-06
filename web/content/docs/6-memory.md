@@ -13,7 +13,7 @@ The **Memory** service allows you to store actionable insights, coding patterns,
 
 Before using Memory, ensure you have:
 
-- **Node.js 18+** installed
+- **Node.js 20.20.0 or higher** installed
 - **AI DevKit CLI** installed: `npm install -g ai-devkit` or use `npx ai-devkit@latest`
 - For MCP usage: A compatible AI assistant (Cursor, Claude Code, etc.)
 
@@ -98,18 +98,49 @@ ai-devkit memory search --query "docker m1"
 
 **Output:**
 ```json
-[
-  {
-    "title": "Fix: Docker connection refused on M1 Mac",
-    "content": "Enable 'Use Rosetta for x86/amd64 emulation' in Docker Desktop settings.",
-    "tags": ["docker", "mac", "infra"],
-    "scope": "global",
-    "score": 5.2
-  }
-]
+{
+  "query": "docker m1",
+  "results": [
+    {
+      "id": "...",
+      "title": "Fix: Docker connection refused on M1 Mac",
+      "content": "Enable 'Use Rosetta for x86/amd64 emulation' in Docker Desktop settings.",
+      "tags": ["docker", "mac", "infra"],
+      "scope": "global",
+      "score": 5.2
+    }
+  ]
+}
 ```
 
-> **Note:** If no results are found, an empty array `[]` is returned.
+Useful options:
+
+- `--limit <n>` to control how many results are returned
+- `--scope <scope>` to filter results to one scope
+- `--tags <tags>` to boost matches using context tags
+- `--table` to print a compact table with `id`, `title`, and `scope`
+
+> **Note:** If no results are found, the `results` array is empty.
+
+### Updating Knowledge
+
+If an existing memory item is still useful but needs corrections or more detail, update it by ID:
+
+```bash
+ai-devkit memory update \
+  --id "<memory-id>" \
+  --title "Fix: Docker connection refused on Apple Silicon" \
+  --content "Enable 'Use Rosetta for x86/amd64 emulation' in Docker Desktop settings, then restart Docker Desktop."
+```
+
+You can also replace tags or scope during an update:
+
+```bash
+ai-devkit memory update \
+  --id "<memory-id>" \
+  --tags "docker,mac,infra" \
+  --scope "global"
+```
 
 ## Using the Memory Skill
 
@@ -175,9 +206,21 @@ ai-devkit memory store \
 
 Your memory is **100% local**. 
 
-All data is stored in a high-performance SQLite database located at `~/.ai-devkit/memory.db`. No data is sent to the cloud, ensuring your proprietary coding patterns remain private.
+By default, Memory stores data in a local SQLite database at `~/.ai-devkit/memory.db`.
 
-This is portable so you can just copy the database file to another machine to use it across different machines.
+If you use the `ai-devkit` CLI, you can override that location in your `.ai-devkit.json` file with `memory.path`. When `memory.path` is set, CLI commands use that path instead. Absolute paths are used as-is, and relative paths are resolved from the directory that contains `.ai-devkit.json`.
+
+```json
+{
+  "memory": {
+    "path": ".ai-devkit/project-memory.db"
+  }
+}
+```
+
+No data is sent to the cloud, ensuring your proprietary coding patterns remain private.
+
+Because the database is just a local file, you can copy it to another machine and keep using the same memory there.
 
 ## Next Steps
 

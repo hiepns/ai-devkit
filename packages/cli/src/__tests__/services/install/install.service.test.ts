@@ -6,7 +6,8 @@ const mockConfigManager: any = {
   read: jest.fn(),
   create: jest.fn(),
   update: jest.fn(),
-  addPhase: jest.fn()
+  addPhase: jest.fn(),
+  getDocsDir: jest.fn()
 };
 
 const mockTemplateManager: any = {
@@ -49,7 +50,9 @@ describe('install service', () => {
   const installConfig = {
     environments: ['codex' as const],
     phases: ['requirements' as const],
-    skills: [{ registry: 'codeaholicguy/ai-devkit', name: 'debug' }]
+    registries: {},
+    skills: [{ registry: 'codeaholicguy/ai-devkit', name: 'debug' }],
+    mcpServers: {}
   };
 
   beforeEach(() => {
@@ -65,6 +68,7 @@ describe('install service', () => {
     });
     mockConfigManager.update.mockResolvedValue({});
     mockConfigManager.addPhase.mockResolvedValue({});
+    mockConfigManager.getDocsDir.mockResolvedValue('docs/ai');
 
     mockTemplateManager.checkEnvironmentExists.mockResolvedValue(false);
     mockTemplateManager.fileExists.mockResolvedValue(false);
@@ -81,7 +85,7 @@ describe('install service', () => {
     expect(mockConfigManager.update).toHaveBeenCalledWith({
       environments: ['codex'],
       phases: ['requirements'],
-      skills: [{ registry: 'codeaholicguy/ai-devkit', name: 'debug' }]
+      skills: [{ registry: 'codeaholicguy/ai-devkit', name: 'debug' }],
     });
     expect(report.environments.installed).toBe(1);
     expect(report.phases.installed).toBe(1);
@@ -105,9 +109,7 @@ describe('install service', () => {
     expect(report.phases.skipped).toBe(1);
     expect(report.skills.installed).toBe(1);
     expect(mockConfigManager.update).toHaveBeenCalledWith({
-      environments: [],
-      phases: [],
-      skills: [{ registry: 'codeaholicguy/ai-devkit', name: 'debug' }]
+      skills: [{ registry: 'codeaholicguy/ai-devkit', name: 'debug' }],
     });
   });
 
@@ -142,6 +144,23 @@ describe('install service', () => {
     expect(report.phases.installed).toBe(1);
   });
 
+  it('does not add skills field to config when no skills are in the install config (issue #64)', async () => {
+    const configWithoutSkills = {
+      environments: ['codex' as const],
+      phases: ['requirements' as const],
+      registries: {},
+      skills: [],
+      mcpServers: {}
+    };
+
+    const report = await reconcileAndInstall(configWithoutSkills, {});
+
+    expect(report.skills.installed).toBe(0);
+    expect(mockConfigManager.update).toHaveBeenCalledWith(
+      expect.not.objectContaining({ skills: expect.anything() })
+    );
+  });
+
   it('reports skill failures as warnings and continues', async () => {
     mockSkillManager.addSkill.mockRejectedValue(new Error('network down'));
 
@@ -159,6 +178,7 @@ describe('install service', () => {
       environments: { installed: 0, skipped: 0, failed: 1 },
       phases: { installed: 0, skipped: 0, failed: 0 },
       skills: { installed: 0, skipped: 0, failed: 0 },
+      mcpServers: { installed: 0, skipped: 0, conflicts: 0, failed: 0 },
       warnings: []
     };
 

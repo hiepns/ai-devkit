@@ -4,6 +4,7 @@ import { EnvironmentSelector } from '../../lib/EnvironmentSelector';
 import { SkillManager } from '../../lib/SkillManager';
 import { TemplateManager } from '../../lib/TemplateManager';
 import { InstallConfigData } from '../../util/config';
+import { installMcpServers, McpInstallReport } from './mcp';
 
 export interface InstallRunOptions {
   overwrite?: boolean;
@@ -19,6 +20,7 @@ export interface InstallReport {
   environments: InstallSectionReport;
   phases: InstallSectionReport;
   skills: InstallSectionReport;
+  mcpServers: McpInstallReport;
   warnings: string[];
 }
 
@@ -27,13 +29,15 @@ export async function reconcileAndInstall(
   options: InstallRunOptions = {}
 ): Promise<InstallReport> {
   const configManager = new ConfigManager();
-  const templateManager = new TemplateManager();
+  const docsDir = await configManager.getDocsDir();
+  const templateManager = new TemplateManager({ docsDir });
   const skillManager = new SkillManager(configManager, new EnvironmentSelector());
 
   const report: InstallReport = {
     environments: { installed: 0, skipped: 0, failed: 0 },
     phases: { installed: 0, skipped: 0, failed: 0 },
     skills: { installed: 0, skipped: 0, failed: 0 },
+    mcpServers: { installed: 0, skipped: 0, conflicts: 0, failed: 0 },
     warnings: []
   };
 
@@ -106,11 +110,43 @@ export async function reconcileAndInstall(
     }
   }
 
-  await configManager.update({
-    environments: successfulEnvironments,
-    phases: successfulPhases,
-    skills: successfulSkills
-  });
+  if (config.mcpServers && Object.keys(config.mcpServers).length > 0) {
+    const allEnvironments = [
+      ...new Set([...projectConfig.environments, ...successfulEnvironments])
+    ];
+    try {
+      const mcpReport = await installMcpServers(
+        config.mcpServers,
+        allEnvironments,
+        process.cwd(),
+        { overwrite: options.overwrite }
+      );
+      report.mcpServers = mcpReport;
+    } catch (error) {
+      report.warnings.push(
+        `MCP servers failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      report.mcpServers.failed = Object.keys(config.mcpServers).length;
+    }
+  }
+
+  const updates: Record<string, unknown> = {};
+  if (successfulEnvironments.length > 0) {
+    updates.environments = successfulEnvironments;
+  }
+  if (successfulPhases.length > 0) {
+    updates.phases = successfulPhases;
+  }
+  if (Object.keys(config.registries).length > 0) {
+    updates.registries = config.registries;
+  }
+  if (successfulSkills.length > 0) {
+    updates.skills = successfulSkills;
+  }
+  if (config.mcpServers && Object.keys(config.mcpServers).length > 0) {
+    updates.mcpServers = config.mcpServers;
+  }
+  await configManager.update(updates as any);
 
   return report;
 }
