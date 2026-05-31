@@ -10,16 +10,47 @@ if [[ $# -lt 1 ]]; then
 fi
 
 FEATURE="$1"
+
+if [[ ! "$FEATURE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "Error: feature name must contain only letters, digits, hyphens, and underscores"
+  exit 1
+fi
+
 DOCS="docs/ai"
 
 exists() { [[ -f "$1" ]]; }
 nonempty() { [[ -f "$1" ]] && [[ -s "$1" ]]; }
 
-REQ="$DOCS/requirements/feature-${FEATURE}.md"
-DES="$DOCS/design/feature-${FEATURE}.md"
-PLN="$DOCS/planning/feature-${FEATURE}.md"
-IMP="$DOCS/implementation/feature-${FEATURE}.md"
-TST="$DOCS/testing/feature-${FEATURE}.md"
+latest_doc() {
+  local phase="$1"
+  local dated_pattern="$DOCS/$phase/"????-??-??"-feature-${FEATURE}.md"
+  local legacy="$DOCS/$phase/feature-${FEATURE}.md"
+  local matches=()
+
+  # Let the shell expand the dated pattern when matches exist. With nullglob
+  # enabled, an unmatched pattern contributes no literal value.
+  shopt -s nullglob
+  matches=( $dated_pattern )
+  shopt -u nullglob
+
+  if [[ ${#matches[@]} -gt 0 ]]; then
+    printf '%s\n' "${matches[@]}" | sort | tail -n 1
+    return 0
+  fi
+
+  if exists "$legacy"; then
+    echo "$legacy"
+    return 0
+  fi
+
+  echo "$legacy"
+}
+
+REQ="$(latest_doc requirements)"
+DES="$(latest_doc design)"
+PLN="$(latest_doc planning)"
+IMP="$(latest_doc implementation)"
+TST="$(latest_doc testing)"
 
 echo "=== Status: $FEATURE ==="
 
@@ -34,8 +65,10 @@ done
 
 # Count planning tasks if planning doc exists
 if exists "$PLN"; then
-  TOTAL=$(grep -c '^\s*- \[' "$PLN" 2>/dev/null || echo 0)
-  DONE=$(grep -c '^\s*- \[x\]' "$PLN" 2>/dev/null || echo 0)
+  TOTAL=$(grep -Ec '^[[:space:]]*- \[' "$PLN" 2>/dev/null || true)
+  DONE=$(grep -Ec '^[[:space:]]*- \[x\]' "$PLN" 2>/dev/null || true)
+  TOTAL=${TOTAL:-0}
+  DONE=${DONE:-0}
   TODO=$((TOTAL - DONE))
   echo ""
   echo "Planning: $DONE/$TOTAL tasks done, $TODO remaining"

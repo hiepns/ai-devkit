@@ -1,597 +1,479 @@
-/**
- * Claude Code Adapter
- * 
- * Detects running Claude Code agents by reading session files
- * from ~/.claude/ directory and correlating with running processes.
- */
-
 import * as fs from 'fs';
 import * as path from 'path';
-import type { AgentAdapter, AgentInfo, ProcessInfo } from './AgentAdapter';
-import { AgentStatus } from './AgentAdapter';
-import { listProcesses } from '../utils/process';
-import { readLastLines, readJsonLines, readJson } from '../utils/file';
+import type {
+    AgentAdapter,
+    AgentInfo,
+    ProcessInfo,
+    ConversationMessage,
+    SessionSummary,
+    ListSessionsOptions,
+} from './AgentAdapter.js';
+import { AgentStatus } from './AgentAdapter.js';
+import { listAgentProcesses, enrichProcesses } from '../utils/process.js';
+import { batchGetSessionFileBirthtimes, isDirectory, listJsonl, safeReaddir, safeStat } from '../utils/session.js';
+import type { SessionFile } from '../utils/session.js';
+import { matchProcessesToSessions, generateAgentName } from '../utils/matching.js';
+import { ClaudeSessionParser } from '../utils/ClaudeSessionParser.js';
+import type { ClaudeSession } from '../utils/ClaudeSessionParser.js';
 
 /**
- * Structure of ~/.claude/projects/{path}/sessions-index.json
+ * Entry in ~/.claude/sessions/<pid>.json written by Claude Code.
+ * Maps a running process to its session file via PID.
  */
-interface SessionsIndex {
-    originalPath: string;
-}
-
-enum SessionEntryType {
-    ASSISTANT = 'assistant',
-    USER = 'user',
-    PROGRESS = 'progress',
-    THINKING = 'thinking',
-    SYSTEM = 'system',
-    MESSAGE = 'message',
-    TEXT = 'text',
-}
-
-/**
- * Entry in session JSONL file
- */
-interface SessionEntry {
-    type?: SessionEntryType;
-    timestamp?: string;
-    slug?: string;
-    cwd?: string;
-    sessionId?: string;
-    message?: {
-        content?: Array<{
-            type?: string;
-            text?: string;
-            content?: string;
-        }>;
-    };
-    [key: string]: unknown;
-}
-
-/**
- * Entry in ~/.claude/history.jsonl
- */
-interface HistoryEntry {
-    display: string;
-    timestamp: number;
-    project: string;
+interface PidFileEntry {
+    pid: number;
     sessionId: string;
+    cwd: string;
+    /** Epoch milliseconds when the Claude Code process started */
+    startedAt: number;
+    kind: string;
+    entrypoint: string;
+    /**
+     * Authoritative live status published by the Claude Code process
+     * (e.g., 'running', 'waiting', 'idle'). Preferred over JSONL-derived
+     * status because trailing entries like 'permission-mode' / 'ai-title'
+     * can mask the real conversational state.
+     */
+    status?: string;
+    /** Short description of what the agent is waiting on (e.g., "approve Read"). */
+    waitingFor?: string;
 }
 
 /**
- * Claude Code session information
+ * A process directly matched to a session via PID file (authoritative path).
+ *
+ * When the matching PID file also exposes live status/waitingFor metadata,
+ * those values are carried here so `mapSessionToAgent` can prefer them
+ * over the JSONL-derived heuristic.
  */
-interface ClaudeSession {
-    sessionId: string;
-    projectPath: string;
-    lastCwd?: string;
-    slug?: string;
-    sessionLogPath: string;
-    lastEntry?: SessionEntry;
-    lastActive?: Date;
+interface DirectMatch {
+    process: ProcessInfo;
+    sessionFile: SessionFile;
+    pidStatus?: AgentStatus;
+    waitingFor?: string;
 }
 
-type SessionMatchMode = 'cwd' | 'project-parent';
+/** Maximum allowed delta (ms) between process start time and PID file startedAt. */
+const PID_FILE_STALENESS_MS = 60000;
 
 /**
  * Claude Code Adapter
- * 
+ *
  * Detects Claude Code agents by:
- * 1. Finding running claude processes
- * 2. Reading session files from ~/.claude/projects/
- * 3. Matching sessions to processes via CWD
- * 4. Extracting status from session JSONL
- * 5. Extracting summary from history.jsonl
+ * 1. Finding running claude processes via shared listAgentProcesses()
+ * 2. Enriching with CWD and start times via shared enrichProcesses()
+ * 3. Attempting authoritative PID-file matching via ~/.claude/sessions/<pid>.json
+ * 4. Falling back to CWD+birthtime heuristic (matchProcessesToSessions) for processes without a PID file
+ * 5. Extracting summary from last user message in session JSONL
  */
 export class ClaudeCodeAdapter implements AgentAdapter {
     readonly type = 'claude' as const;
 
-    /** Threshold in minutes before considering a session idle */
-    private static readonly IDLE_THRESHOLD_MINUTES = 5;
-
-    private claudeDir: string;
     private projectsDir: string;
-    private historyPath: string;
+    private sessionsDir: string;
+    private parser: ClaudeSessionParser;
 
     constructor() {
         const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-        this.claudeDir = path.join(homeDir, '.claude');
-        this.projectsDir = path.join(this.claudeDir, 'projects');
-        this.historyPath = path.join(this.claudeDir, 'history.jsonl');
+        this.projectsDir = path.join(homeDir, '.claude', 'projects');
+        this.sessionsDir = path.join(homeDir, '.claude', 'sessions');
+        this.parser = new ClaudeSessionParser();
     }
 
-    /**
-     * Check if this adapter can handle a given process
-     */
     canHandle(processInfo: ProcessInfo): boolean {
-        return processInfo.command.toLowerCase().includes('claude');
+        return this.isClaudeExecutable(processInfo.command);
     }
 
-    /**
-     * Detect running Claude Code agents
-     */
-    async detectAgents(): Promise<AgentInfo[]> {
-        const claudeProcesses = listProcesses({ namePattern: 'claude' }).filter((processInfo) =>
-            this.canHandle(processInfo),
-        );
+    private isClaudeExecutable(command: string): boolean {
+        const executable = command.trim().split(/\s+/)[0] || '';
+        const base = path.basename(executable).toLowerCase();
+        return base === 'claude' || base === 'claude.exe';
+    }
 
-        if (claudeProcesses.length === 0) {
+    async detectAgents(): Promise<AgentInfo[]> {
+        const processes = enrichProcesses(listAgentProcesses('claude'));
+        if (processes.length === 0) {
             return [];
         }
 
-        const sessions = this.readSessions();
-        const history = this.readHistory();
-        const historyByProjectPath = this.indexHistoryByProjectPath(history);
-        const historyBySessionId = new Map<string, HistoryEntry>();
-        for (const entry of history) {
-            historyBySessionId.set(entry.sessionId, entry);
-        }
+        // Step 1: extract `--resume <id>` from command line — authoritative for
+        // resumed sessions where the JSONL predates the process and PID-file/
+        // birthtime heuristics can't match it.
+        const { direct: resumeDirect, fallback: noResume } = this.tryResumeMatching(processes);
 
-        const sortedSessions = [...sessions].sort((a, b) => {
-            const timeA = a.lastActive?.getTime() || 0;
-            const timeB = b.lastActive?.getTime() || 0;
-            return timeB - timeA;
-        });
+        // Step 2: try authoritative PID-file matching for the rest
+        const { direct: pidDirect, fallback } = this.tryPidFileMatching(noResume);
 
-        const usedSessionIds = new Set<string>();
-        const assignedPids = new Set<number>();
+        const direct = [...resumeDirect, ...pidDirect];
+
+        // Step 3: run legacy CWD+birthtime matching only for processes without a PID file
+        const legacySessions = this.discoverSessions(fallback);
+        const legacyMatches =
+            fallback.length > 0 && legacySessions.length > 0
+                ? matchProcessesToSessions(fallback, legacySessions)
+                : [];
+
+        const matchedPids = new Set([
+            ...direct.map((d) => d.process.pid),
+            ...legacyMatches.map((m) => m.process.pid),
+        ]);
+
         const agents: AgentInfo[] = [];
 
-        this.assignSessionsForMode(
-            'cwd',
-            claudeProcesses,
-            sortedSessions,
-            usedSessionIds,
-            assignedPids,
-            historyBySessionId,
-            agents,
-        );
-        this.assignHistoryEntriesForExactProcessCwd(
-            claudeProcesses,
-            assignedPids,
-            historyByProjectPath,
-            usedSessionIds,
-            agents,
-        );
-        this.assignSessionsForMode(
-            'project-parent',
-            claudeProcesses,
-            sortedSessions,
-            usedSessionIds,
-            assignedPids,
-            historyBySessionId,
-            agents,
-        );
-        for (const processInfo of claudeProcesses) {
-            if (assignedPids.has(processInfo.pid)) {
-                continue;
+        // Build agents from direct (resume + PID-file) matches
+        for (const match of direct) {
+            const { process: proc, sessionFile } = match;
+            const sessionData = this.parser.readSession(sessionFile.filePath, sessionFile.resolvedCwd);
+            if (sessionData) {
+                agents.push(this.mapSessionToAgent(sessionData, proc, sessionFile, {
+                    pidStatus: match.pidStatus,
+                    waitingFor: match.waitingFor,
+                }));
+            } else {
+                matchedPids.delete(proc.pid);
             }
+        }
 
-            assignedPids.add(processInfo.pid);
-            agents.push(this.mapProcessOnlyAgent(processInfo, agents, historyByProjectPath, usedSessionIds));
+        // Build agents from legacy matches
+        for (const match of legacyMatches) {
+            const sessionData = this.parser.readSession(
+                match.session.filePath,
+                match.session.resolvedCwd,
+            );
+            if (sessionData) {
+                agents.push(this.mapSessionToAgent(sessionData, match.process, match.session));
+            } else {
+                matchedPids.delete(match.process.pid);
+            }
+        }
+
+        // Any process with no match (direct or legacy) appears as IDLE
+        for (const proc of processes) {
+            if (!matchedPids.has(proc.pid)) {
+                agents.push(this.mapProcessOnlyAgent(proc));
+            }
         }
 
         return agents;
     }
 
-    private assignHistoryEntriesForExactProcessCwd(
-        claudeProcesses: ProcessInfo[],
-        assignedPids: Set<number>,
-        historyByProjectPath: Map<string, HistoryEntry[]>,
-        usedSessionIds: Set<string>,
-        agents: AgentInfo[],
-    ): void {
-        for (const processInfo of claudeProcesses) {
-            if (assignedPids.has(processInfo.pid)) {
+    /**
+     * Discover session files for the given processes.
+     *
+     * For each unique process CWD, encodes it to derive the expected
+     * ~/.claude/projects/<encoded>/ directory, then gets session file birthtimes
+     * via a single batched stat call across all directories.
+     */
+    private discoverSessions(processes: ProcessInfo[]): SessionFile[] {
+        const dirToCwd = new Map<string, string>();
+
+        for (const proc of processes) {
+            if (!proc.cwd) continue;
+
+            const projectDir = this.getProjectDir(proc.cwd);
+            if (dirToCwd.has(projectDir)) continue;
+
+            try {
+                if (!fs.statSync(projectDir).isDirectory()) continue;
+            } catch {
                 continue;
             }
 
-            const historyEntry = this.selectHistoryForProcess(processInfo.cwd || '', historyByProjectPath, usedSessionIds);
-            if (!historyEntry) {
-                continue;
-            }
-
-            assignedPids.add(processInfo.pid);
-            usedSessionIds.add(historyEntry.sessionId);
-            agents.push(this.mapHistoryToAgent(processInfo, historyEntry, agents));
+            dirToCwd.set(projectDir, proc.cwd);
         }
+
+        if (dirToCwd.size === 0) return [];
+
+        const files = batchGetSessionFileBirthtimes([...dirToCwd.keys()]);
+
+        for (const file of files) {
+            file.resolvedCwd = dirToCwd.get(file.projectDir) || '';
+        }
+
+        return files;
     }
 
-    private assignSessionsForMode(
-        mode: SessionMatchMode,
-        claudeProcesses: ProcessInfo[],
-        sessions: ClaudeSession[],
-        usedSessionIds: Set<string>,
-        assignedPids: Set<number>,
-        historyBySessionId: Map<string, HistoryEntry>,
-        agents: AgentInfo[],
-    ): void {
-        for (const processInfo of claudeProcesses) {
-            if (assignedPids.has(processInfo.pid)) {
+    /**
+     * Match processes via `claude --resume <uuid>` in their command line.
+     * This works for resumed sessions, where the JSONL was created earlier
+     * (so its birthtime is far from the process startTime and the legacy
+     * matcher can't pair them) and the PID file may also be misaligned.
+     */
+    private tryResumeMatching(processes: ProcessInfo[]): {
+        direct: DirectMatch[];
+        fallback: ProcessInfo[];
+    } {
+        const direct: DirectMatch[] = [];
+        const fallback: ProcessInfo[] = [];
+
+        for (const proc of processes) {
+            const sessionId = this.extractResumeSessionId(proc.command);
+            if (!sessionId || !proc.cwd) {
+                fallback.push(proc);
                 continue;
             }
 
-            const session = this.selectBestSession(processInfo, sessions, usedSessionIds, mode);
-            if (!session) {
+            const projectDir = this.getProjectDir(proc.cwd);
+            const jsonlPath = path.join(projectDir, `${sessionId}.jsonl`);
+
+            const stat = safeStat(jsonlPath);
+            if (!stat) {
+                fallback.push(proc);
                 continue;
             }
 
-            usedSessionIds.add(session.sessionId);
-            assignedPids.add(processInfo.pid);
-            agents.push(this.mapSessionToAgent(session, processInfo, historyBySessionId, agents));
+            // Best-effort: the PID file (if present for this proc) is the
+            // authoritative source of live status. We still match the session
+            // via --resume, but we read the PID file alongside to capture
+            // status/waitingFor.
+            const pidEntry = this.readMatchingPidFile(proc.pid, proc.startTime);
+
+            direct.push({
+                process: proc,
+                sessionFile: {
+                    sessionId,
+                    filePath: jsonlPath,
+                    projectDir,
+                    birthtimeMs: stat.birthtimeMs,
+                    resolvedCwd: proc.cwd,
+                },
+                pidStatus: this.mapPidStatus(pidEntry?.status),
+                waitingFor: pidEntry?.waitingFor,
+            });
         }
+
+        return { direct, fallback };
     }
 
-    private selectBestSession(
-        processInfo: ProcessInfo,
-        sessions: ClaudeSession[],
-        usedSessionIds: Set<string>,
-        mode: SessionMatchMode,
-    ): ClaudeSession | null {
-        const candidates = sessions.filter((session) => {
-            if (usedSessionIds.has(session.sessionId)) {
-                return false;
+    private extractResumeSessionId(command: string): string | null {
+        const match = command.match(/--resume\s+([0-9a-f-]{36})/i);
+        return match?.[1] ?? null;
+    }
+
+    /**
+     * Read and parse ~/.claude/sessions/<pid>.json, returning null on any
+     * I/O / parse failure or when the file is stale relative to the live
+     * process.
+     *
+     * "Stale" means the PID file's startedAt diverges from the process's
+     * start time by more than {@link PID_FILE_STALENESS_MS} — typically
+     * a previous Claude Code process recycled the same PID without cleanup.
+     */
+    private readMatchingPidFile(pid: number, procStartTime?: Date): PidFileEntry | null {
+        const pidFilePath = path.join(this.sessionsDir, `${pid}.json`);
+        try {
+            const entry = JSON.parse(
+                fs.readFileSync(pidFilePath, 'utf-8'),
+            ) as PidFileEntry;
+
+            if (procStartTime) {
+                const deltaMs = Math.abs(procStartTime.getTime() - entry.startedAt);
+                if (deltaMs > PID_FILE_STALENESS_MS) {
+                    return null;
+                }
             }
 
-            if (mode === 'cwd') {
-                return this.pathEquals(processInfo.cwd, session.lastCwd)
-                    || this.pathEquals(processInfo.cwd, session.projectPath);
-            }
-
-            if (mode === 'project-parent') {
-                return this.isChildPath(processInfo.cwd, session.projectPath)
-                    || this.isChildPath(processInfo.cwd, session.lastCwd);
-            }
-
-            return false;
-        });
-
-        if (candidates.length === 0) {
+            return entry;
+        } catch {
             return null;
         }
+    }
 
-        if (mode !== 'project-parent') {
-            return candidates[0];
+    /**
+     * Map the PID file's live status string to {@link AgentStatus}.
+     *
+     * Returns undefined for missing / unrecognized values so the caller
+     * can fall back to JSONL-derived heuristics.
+     */
+    private mapPidStatus(status: string | undefined): AgentStatus | undefined {
+        switch (status) {
+            case 'running':
+                return AgentStatus.RUNNING;
+            case 'waiting':
+                return AgentStatus.WAITING;
+            case 'idle':
+                return AgentStatus.IDLE;
+            default:
+                return undefined;
         }
+    }
 
-        return candidates.sort((a, b) => {
-            const depthA = Math.max(this.pathDepth(a.projectPath), this.pathDepth(a.lastCwd));
-            const depthB = Math.max(this.pathDepth(b.projectPath), this.pathDepth(b.lastCwd));
-            if (depthA !== depthB) {
-                return depthB - depthA;
+    /**
+     * Attempt to match each process to its session via ~/.claude/sessions/<pid>.json.
+     *
+     * Returns:
+     *   direct  — processes matched authoritatively via PID file
+     *   fallback — processes with no valid PID file (sent to legacy matching)
+     *
+     * Per-process fallback triggers on: file absent, malformed JSON,
+     * stale startedAt (>60s from proc.startTime), or missing JSONL.
+     */
+    private tryPidFileMatching(processes: ProcessInfo[]): {
+        direct: DirectMatch[];
+        fallback: ProcessInfo[];
+    } {
+        const direct: DirectMatch[] = [];
+        const fallback: ProcessInfo[] = [];
+
+        for (const proc of processes) {
+            const entry = this.readMatchingPidFile(proc.pid, proc.startTime);
+            if (!entry) {
+                fallback.push(proc);
+                continue;
             }
 
-            const lastActiveA = a.lastActive?.getTime() || 0;
-            const lastActiveB = b.lastActive?.getTime() || 0;
-            return lastActiveB - lastActiveA;
-        })[0];
+            const projectDir = this.getProjectDir(entry.cwd);
+            const jsonlPath = path.join(projectDir, `${entry.sessionId}.jsonl`);
+
+            if (!fs.existsSync(jsonlPath)) {
+                fallback.push(proc);
+                continue;
+            }
+
+            direct.push({
+                process: proc,
+                sessionFile: {
+                    sessionId: entry.sessionId,
+                    filePath: jsonlPath,
+                    projectDir,
+                    birthtimeMs: entry.startedAt,
+                    resolvedCwd: entry.cwd,
+                },
+                pidStatus: this.mapPidStatus(entry.status),
+                waitingFor: entry.waitingFor,
+            });
+        }
+
+        return { direct, fallback };
+    }
+
+    /**
+     * Derive the Claude Code project directory for a given CWD.
+     *
+     * Claude Code encodes paths by replacing every non-alphanumeric
+     * character with '-', so '/', '_', '.', spaces, etc. all collapse:
+     *   /Users/foo/bar          → -Users-foo-bar
+     *   /Users/foo/my_project   → -Users-foo-my-project
+     *   /Users/foo/.worktrees/x → -Users-foo--worktrees-x
+     *
+     * The encoding is lossy — multiple real paths can collide on the
+     * same encoded dir. Callers that need to disambiguate must read the
+     * `cwd` field inside each session JSONL.
+     */
+    private getProjectDir(cwd: string): string {
+        const encoded = cwd.replace(/[^a-zA-Z0-9]/g, '-');
+        return path.join(this.projectsDir, encoded);
     }
 
     private mapSessionToAgent(
         session: ClaudeSession,
         processInfo: ProcessInfo,
-        historyBySessionId: Map<string, HistoryEntry>,
-        existingAgents: AgentInfo[],
+        sessionFile: SessionFile,
+        liveInfo?: { pidStatus?: AgentStatus; waitingFor?: string },
     ): AgentInfo {
-        const historyEntry = historyBySessionId.get(session.sessionId);
+        // Live PID-file status is authoritative when present — JSONL-derived
+        // status mis-classifies sessions whose latest entry is a UI-state
+        // event like `permission-mode` or `ai-title`.
+        const status = liveInfo?.pidStatus ?? this.parser.determineStatus(session);
+        const baseSummary = session.lastUserMessage || 'Session started';
+        const summary = status === AgentStatus.WAITING && liveInfo?.waitingFor
+            ? `${baseSummary} — waiting for ${liveInfo.waitingFor}`
+            : baseSummary;
 
         return {
-            name: this.generateAgentName(session, existingAgents),
+            name: generateAgentName(processInfo.cwd, processInfo.pid),
             type: this.type,
-            status: this.determineStatus(session),
-            summary: historyEntry?.display || 'Session started',
+            status,
+            summary,
             pid: processInfo.pid,
-            projectPath: session.projectPath || processInfo.cwd || '',
-            sessionId: session.sessionId,
-            slug: session.slug,
-            lastActive: session.lastActive || new Date(),
+            projectPath: sessionFile.resolvedCwd || processInfo.cwd || '',
+            sessionId: sessionFile.sessionId,
+            lastActive: session.lastActive,
+            sessionFilePath: sessionFile.filePath,
         };
     }
 
-    private mapProcessOnlyAgent(
-        processInfo: ProcessInfo,
-        existingAgents: AgentInfo[],
-        historyByProjectPath: Map<string, HistoryEntry[]>,
-        usedSessionIds: Set<string>,
-    ): AgentInfo {
-        const projectPath = processInfo.cwd || '';
-        const historyEntry = this.selectHistoryForProcess(projectPath, historyByProjectPath, usedSessionIds);
-        const sessionId = historyEntry?.sessionId || `pid-${processInfo.pid}`;
-        const lastActive = historyEntry ? new Date(historyEntry.timestamp) : new Date();
-        if (historyEntry) {
-            usedSessionIds.add(historyEntry.sessionId);
-        }
-
-        const processSession: ClaudeSession = {
-            sessionId,
-            projectPath,
-            lastCwd: projectPath,
-            sessionLogPath: '',
-            lastActive,
-        };
-
+    private mapProcessOnlyAgent(processInfo: ProcessInfo): AgentInfo {
         return {
-            name: this.generateAgentName(processSession, existingAgents),
+            name: generateAgentName(processInfo.cwd || '', processInfo.pid),
             type: this.type,
-            status: AgentStatus.RUNNING,
-            summary: historyEntry?.display || 'Claude process running',
+            status: AgentStatus.IDLE,
+            summary: 'Unknown',
             pid: processInfo.pid,
-            projectPath,
-            sessionId: processSession.sessionId,
-            lastActive: processSession.lastActive || new Date(),
+            projectPath: processInfo.cwd || '',
+            sessionId: `pid-${processInfo.pid}`,
+            lastActive: new Date(),
         };
     }
 
-    private mapHistoryToAgent(
-        processInfo: ProcessInfo,
-        historyEntry: HistoryEntry,
-        existingAgents: AgentInfo[],
-    ): AgentInfo {
-        const projectPath = processInfo.cwd || historyEntry.project;
-        const historySession: ClaudeSession = {
-            sessionId: historyEntry.sessionId,
-            projectPath,
-            lastCwd: projectPath,
-            sessionLogPath: '',
-            lastActive: new Date(historyEntry.timestamp),
-        };
-
-        return {
-            name: this.generateAgentName(historySession, existingAgents),
-            type: this.type,
-            status: AgentStatus.RUNNING,
-            summary: historyEntry.display || 'Claude process running',
-            pid: processInfo.pid,
-            projectPath,
-            sessionId: historySession.sessionId,
-            lastActive: historySession.lastActive || new Date(),
-        };
+    getConversation(sessionFilePath: string, options?: { verbose?: boolean }): ConversationMessage[] {
+        return this.parser.getConversation(sessionFilePath, options);
     }
 
-    private indexHistoryByProjectPath(historyEntries: HistoryEntry[]): Map<string, HistoryEntry[]> {
-        const grouped = new Map<string, HistoryEntry[]>();
+    async listSessions(opts?: ListSessionsOptions): Promise<SessionSummary[]> {
+        const filterCwd = opts?.cwd;
+        const candidates = this.discoverSessionFiles();
+        const summaries: SessionSummary[] = [];
 
-        for (const entry of historyEntries) {
-            const key = this.normalizePath(entry.project);
-            const list = grouped.get(key) || [];
-            list.push(entry);
-            grouped.set(key, list);
+        for (const { filePath, defaultCwd } of candidates) {
+            const session = this.parser.readSession(filePath, defaultCwd);
+            if (!session) continue;
+
+            // Drop sessions whose JSONL had no parseable conversation entries.
+            // readSession is permissive (returns a shell record even when every
+            // line fails to parse); listSessions needs at least one real entry
+            // so we don't surface garbage files.
+            if (!session.lastEntryType) continue;
+
+            const recordedCwd = session.lastCwd || defaultCwd;
+            if (filterCwd !== undefined && recordedCwd !== filterCwd) continue;
+
+            const stat = safeStat(filePath);
+
+            summaries.push({
+                type: 'claude',
+                sessionId: session.sessionId,
+                cwd: recordedCwd,
+                firstUserMessage: session.firstUserMessage || '',
+                lastActive: session.lastActive ?? stat?.mtime ?? new Date(),
+                startedAt: session.sessionStart ?? stat?.birthtime ?? stat?.mtime ?? new Date(),
+                sessionFilePath: filePath,
+            });
         }
 
-        for (const [key, list] of grouped.entries()) {
-            grouped.set(
-                key,
-                [...list].sort((a, b) => b.timestamp - a.timestamp),
-            );
-        }
-
-        return grouped;
-    }
-
-    private selectHistoryForProcess(
-        processCwd: string,
-        historyByProjectPath: Map<string, HistoryEntry[]>,
-        usedSessionIds: Set<string>,
-    ): HistoryEntry | undefined {
-        if (!processCwd) {
-            return undefined;
-        }
-
-        const candidates = historyByProjectPath.get(this.normalizePath(processCwd)) || [];
-        return candidates.find((entry) => !usedSessionIds.has(entry.sessionId));
+        return summaries;
     }
 
     /**
-     * Read all Claude Code sessions
+     * Discover candidate session files for {@link listSessions}.
+     *
+     * Always walks every subdirectory of `projectsDir`. We can't use the
+     * encoded-dir shortcut for the cwd-scoped path because Claude Code
+     * indexes session files by where the *process was launched*, not by
+     * the recorded `cwd` field inside the session — these diverge in
+     * worktrees and similar setups. The cwd filter is applied later
+     * against `session.lastCwd` so callers see exactly the sessions whose
+     * recorded cwd matches.
      */
-    private readSessions(): ClaudeSession[] {
-        if (!fs.existsSync(this.projectsDir)) {
-            return [];
-        }
+    private discoverSessionFiles(): Array<{ filePath: string; defaultCwd: string }> {
+        const out: Array<{ filePath: string; defaultCwd: string }> = [];
 
-        const sessions: ClaudeSession[] = [];
-        const projectDirs = fs.readdirSync(this.projectsDir);
+        if (!isDirectory(this.projectsDir)) return out;
 
-        for (const dirName of projectDirs) {
-            if (dirName.startsWith('.')) {
-                continue;
-            }
-
+        for (const dirName of safeReaddir(this.projectsDir)) {
             const projectDir = path.join(this.projectsDir, dirName);
-            if (!fs.statSync(projectDir).isDirectory()) {
-                continue;
-            }
+            if (!isDirectory(projectDir)) continue;
 
-            // Read sessions-index.json to get original project path
-            const indexPath = path.join(projectDir, 'sessions-index.json');
-            if (!fs.existsSync(indexPath)) {
-                continue;
-            }
-
-            const sessionsIndex = readJson<SessionsIndex>(indexPath);
-            if (!sessionsIndex) {
-                console.error(`Failed to parse ${indexPath}`);
-                continue;
-            }
-
-            const sessionFiles = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
-
-            for (const sessionFile of sessionFiles) {
-                const sessionId = sessionFile.replace('.jsonl', '');
-                const sessionLogPath = path.join(projectDir, sessionFile);
-
-                try {
-                    const sessionData = this.readSessionLog(sessionLogPath);
-
-                    sessions.push({
-                        sessionId,
-                        projectPath: sessionsIndex.originalPath,
-                        lastCwd: sessionData.lastCwd,
-                        slug: sessionData.slug,
-                        sessionLogPath,
-                        lastEntry: sessionData.lastEntry,
-                        lastActive: sessionData.lastActive,
-                    });
-                } catch (error) {
-                    console.error(`Failed to read session ${sessionId}:`, error);
-                    continue;
-                }
+            // Best-effort decode for the rare case session content has no
+            // recorded cwd: '-Users-foo-bar' → '/Users/foo/bar'. Lossy for
+            // paths containing '-'; session content's lastCwd overrides
+            // this when available.
+            const decoded = dirName.replace(/-/g, '/');
+            for (const name of listJsonl(projectDir)) {
+                out.push({ filePath: path.join(projectDir, name), defaultCwd: decoded });
             }
         }
 
-        return sessions;
+        return out;
     }
-
-    /**
-     * Read a session JSONL file
-     * Only reads last 100 lines for performance with large files
-     */
-    private readSessionLog(logPath: string): {
-        slug?: string;
-        lastEntry?: SessionEntry;
-        lastActive?: Date;
-        lastCwd?: string;
-    } {
-        const lines = readLastLines(logPath, 100);
-
-        let slug: string | undefined;
-        let lastEntry: SessionEntry | undefined;
-        let lastActive: Date | undefined;
-        let lastCwd: string | undefined;
-
-        for (const line of lines) {
-            try {
-                const entry: SessionEntry = JSON.parse(line);
-
-                if (entry.slug && !slug) {
-                    slug = entry.slug;
-                }
-
-                lastEntry = entry;
-
-                if (entry.timestamp) {
-                    lastActive = new Date(entry.timestamp);
-                }
-
-                if (typeof entry.cwd === 'string' && entry.cwd.trim().length > 0) {
-                    lastCwd = entry.cwd;
-                }
-            } catch (error) {
-                continue;
-            }
-        }
-
-        return { slug, lastEntry, lastActive, lastCwd };
-    }
-
-    /**
-     * Read history.jsonl for user prompts
-     * Only reads last 100 lines for performance
-     */
-    private readHistory(): HistoryEntry[] {
-        return readJsonLines<HistoryEntry>(this.historyPath, 100);
-    }
-
-    /**
-     * Determine agent status from session entry
-     */
-    private determineStatus(session: ClaudeSession): AgentStatus {
-        if (!session.lastEntry) {
-            return AgentStatus.UNKNOWN;
-        }
-
-        const entryType = session.lastEntry.type;
-        const lastActive = session.lastActive || new Date(0);
-        const ageMinutes = (Date.now() - lastActive.getTime()) / 1000 / 60;
-
-        if (ageMinutes > ClaudeCodeAdapter.IDLE_THRESHOLD_MINUTES) {
-            return AgentStatus.IDLE;
-        }
-
-        if (entryType === SessionEntryType.USER) {
-            // Check if user interrupted manually - this puts agent back in waiting state
-            const content = session.lastEntry.message?.content;
-            if (Array.isArray(content)) {
-                const isInterrupted = content.some(c =>
-                    (c.type === SessionEntryType.TEXT && c.text?.includes('[Request interrupted')) ||
-                    (c.type === 'tool_result' && c.content?.includes('[Request interrupted'))
-                );
-                if (isInterrupted) return AgentStatus.WAITING;
-            }
-            return AgentStatus.RUNNING;
-        }
-
-        if (entryType === SessionEntryType.PROGRESS || entryType === SessionEntryType.THINKING) {
-            return AgentStatus.RUNNING;
-        } else if (entryType === SessionEntryType.ASSISTANT) {
-            return AgentStatus.WAITING;
-        } else if (entryType === SessionEntryType.SYSTEM) {
-            return AgentStatus.IDLE;
-        }
-
-        return AgentStatus.UNKNOWN;
-    }
-
-    /**
-     * Generate unique agent name
-     * Uses project basename, appends slug if multiple sessions for same project
-     */
-    private generateAgentName(session: ClaudeSession, existingAgents: AgentInfo[]): string {
-        const projectName = path.basename(session.projectPath) || 'claude';
-
-        const sameProjectAgents = existingAgents.filter(
-            a => a.projectPath === session.projectPath
-        );
-
-        if (sameProjectAgents.length === 0) {
-            return projectName;
-        }
-
-        // Multiple sessions for same project, append slug
-        if (session.slug) {
-            // Use first word of slug for brevity (with safety check for format)
-            const slugPart = session.slug.includes('-')
-                ? session.slug.split('-')[0]
-                : session.slug.slice(0, 8);
-            return `${projectName} (${slugPart})`;
-        }
-
-        // No slug available, use session ID prefix
-        return `${projectName} (${session.sessionId.slice(0, 8)})`;
-    }
-
-    private pathEquals(a?: string, b?: string): boolean {
-        if (!a || !b) {
-            return false;
-        }
-
-        return this.normalizePath(a) === this.normalizePath(b);
-    }
-
-    private isChildPath(child?: string, parent?: string): boolean {
-        if (!child || !parent) {
-            return false;
-        }
-
-        const normalizedChild = this.normalizePath(child);
-        const normalizedParent = this.normalizePath(parent);
-        return normalizedChild === normalizedParent || normalizedChild.startsWith(`${normalizedParent}${path.sep}`);
-    }
-
-    private normalizePath(value: string): string {
-        const resolved = path.resolve(value);
-        if (resolved.length > 1 && resolved.endsWith(path.sep)) {
-            return resolved.slice(0, -1);
-        }
-        return resolved;
-    }
-
-    private pathDepth(value?: string): number {
-        if (!value) {
-            return 0;
-        }
-
-        return this.normalizePath(value).split(path.sep).filter(Boolean).length;
-    }
-
 }

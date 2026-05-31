@@ -1,28 +1,60 @@
-import * as fs from 'fs-extra';
+import type { Mocked } from 'vitest';
+import fs from 'fs-extra';
 import * as path from 'path';
-import { ConfigManager } from '../../lib/Config';
-import { DevKitConfig } from '../../types';
+import { ConfigManager } from '../../lib/Config.js';
+import { DevKitConfig } from '../../types.js';
 
-jest.mock('fs-extra');
-jest.mock('path');
-jest.mock('../../../package.json', () => ({
-  version: '1.0.0'
+vi.mock('fs-extra', () => {
+  const m = {
+    pathExists: vi.fn(), readJson: vi.fn(), writeJson: vi.fn(),
+    readFile: vi.fn(), writeFile: vi.fn(), ensureDir: vi.fn(),
+    ensureFile: vi.fn(), readdir: vi.fn(), stat: vi.fn(),
+    copy: vi.fn(), copyFile: vi.fn(), remove: vi.fn(),
+    move: vi.fn(), outputFile: vi.fn(), outputJson: vi.fn(),
+    emptyDir: vi.fn(),
+  };
+  return { ...m, default: m };
+});
+vi.mock('path', () => {
+  const m = {
+    join: vi.fn(),
+    dirname: vi.fn(),
+    resolve: vi.fn(),
+    isAbsolute: vi.fn(),
+    basename: vi.fn(),
+    extname: vi.fn(),
+    sep: '/',
+    delimiter: ':',
+    parse: vi.fn(),
+    format: vi.fn(),
+    normalize: vi.fn(),
+    relative: vi.fn(),
+    posix: {} as any,
+    win32: {} as any,
+  };
+  return { ...m, default: m };
+});
+vi.mock('../../../package.json', () => ({
+  default: { version: '1.0.0' },
 }));
 
 describe('ConfigManager', () => {
   let configManager: ConfigManager;
-  let mockFs: jest.Mocked<typeof fs>;
-  let mockPath: jest.Mocked<typeof path>;
+  let mockFs: Mocked<typeof fs>;
+  let mockPath: Mocked<typeof path>;
 
   beforeEach(() => {
     configManager = new ConfigManager('/test/dir');
-    mockFs = fs as jest.Mocked<typeof fs>;
-    mockPath = path as jest.Mocked<typeof path>;
+    mockFs = fs as Mocked<typeof fs>;
+    mockPath = path as Mocked<typeof path>;
     mockPath.join.mockImplementation((...args) => args.join('/'));
+    mockPath.dirname.mockImplementation((input: string) => input.split('/').slice(0, -1).join('/') || '/');
+    mockPath.resolve.mockImplementation((...args) => args.join('/').replace(/\/+/g, '/'));
+    mockPath.isAbsolute.mockImplementation((input: string) => input.startsWith('/'));
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('constructor', () => {
@@ -254,6 +286,108 @@ describe('ConfigManager', () => {
     });
   });
 
+  describe('getDocsDir', () => {
+    it('should return custom docsDir when set in config', async () => {
+      const config: DevKitConfig = {
+        version: '1.0.0',
+        paths: { docs: '.ai-docs' },
+        environments: [],
+        phases: [],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      };
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue(config);
+
+      const result = await configManager.getDocsDir();
+
+      expect(result).toBe('.ai-docs');
+    });
+
+    it('should return default docs/ai when docsDir is not set', async () => {
+      const config: DevKitConfig = {
+        version: '1.0.0',
+        environments: [],
+        phases: [],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      };
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue(config);
+
+      const result = await configManager.getDocsDir();
+
+      expect(result).toBe('docs/ai');
+    });
+
+    it('should return default docs/ai when config does not exist', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(false);
+
+      const result = await configManager.getDocsDir();
+
+      expect(result).toBe('docs/ai');
+    });
+  });
+
+  describe('getPhases', () => {
+    it('should return configured phases when config exists', async () => {
+      const config: DevKitConfig = {
+        version: '1.0.0',
+        environments: [],
+        phases: ['requirements', 'deployment'],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      };
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue(config);
+
+      const result = await configManager.getPhases();
+
+      expect(result).toEqual(['requirements', 'deployment']);
+    });
+
+    it('should return default lifecycle phases when config has no phases', async () => {
+      const config: DevKitConfig = {
+        version: '1.0.0',
+        environments: [],
+        phases: [],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      };
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue(config);
+
+      const result = await configManager.getPhases();
+
+      expect(result).toEqual(['requirements', 'design', 'planning', 'implementation', 'testing']);
+    });
+  });
+
+  describe('setDocsDir', () => {
+    it('should update docsDir in config', async () => {
+      const config: DevKitConfig = {
+        version: '1.0.0',
+        environments: [],
+        phases: [],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      };
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue(config);
+      (mockFs.writeJson as any).mockResolvedValue(undefined);
+
+      const result = await configManager.setDocsDir('.ai-docs');
+
+      expect(result.paths?.docs).toBe('.ai-docs');
+      expect(mockFs.writeJson).toHaveBeenCalled();
+    });
+  });
+
   describe('getEnvironments', () => {
     it('should return environments array when config exists', async () => {
       const config: DevKitConfig = {
@@ -402,6 +536,234 @@ describe('ConfigManager', () => {
 
       expect(result.skills).toEqual([{ registry: 'codeaholicguy/ai-devkit', name: 'debug' }]);
       expect(mockFs.writeJson).not.toHaveBeenCalled();
+    });
+
+    it('adds skill when skills is undefined', async () => {
+      const config: DevKitConfig = {
+        version: '1.0.0',
+        environments: ['cursor'],
+        phases: [],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      };
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue(config);
+      (mockFs.writeJson as any).mockResolvedValue(undefined);
+
+      const result = await configManager.addSkill({
+        registry: 'codeaholicguy/ai-devkit',
+        name: 'memory'
+      });
+
+      expect(result.skills).toEqual([
+        { registry: 'codeaholicguy/ai-devkit', name: 'memory' }
+      ]);
+      expect(mockFs.writeJson).toHaveBeenCalled();
+    });
+  });
+
+  describe('removeSkill', () => {
+    it('removes the skill entry from the skills array', async () => {
+      const config: DevKitConfig = {
+        version: '1.0.0',
+        environments: ['claude'],
+        phases: [],
+        skills: [
+          { registry: 'codeaholicguy/ai-devkit', name: 'dev-lifecycle' },
+          { registry: 'codeaholicguy/ai-devkit', name: 'memory' }
+        ],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      };
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue(config);
+      (mockFs.writeJson as any).mockResolvedValue(undefined);
+
+      const result = await configManager.removeSkill('dev-lifecycle');
+
+      expect(result.skills).toEqual([
+        { registry: 'codeaholicguy/ai-devkit', name: 'memory' }
+      ]);
+      expect(mockFs.writeJson).toHaveBeenCalled();
+    });
+
+    it('results in an empty array when last skill is removed', async () => {
+      const config: DevKitConfig = {
+        version: '1.0.0',
+        environments: ['claude'],
+        phases: [],
+        skills: [
+          { registry: 'codeaholicguy/ai-devkit', name: 'dev-lifecycle' }
+        ],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      };
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue(config);
+      (mockFs.writeJson as any).mockResolvedValue(undefined);
+
+      const result = await configManager.removeSkill('dev-lifecycle');
+
+      expect(result.skills).toEqual([]);
+      expect(mockFs.writeJson).toHaveBeenCalled();
+    });
+
+    it('is a no-op when skill name does not exist', async () => {
+      const config: DevKitConfig = {
+        version: '1.0.0',
+        environments: ['claude'],
+        phases: [],
+        skills: [
+          { registry: 'codeaholicguy/ai-devkit', name: 'memory' }
+        ],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      };
+
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue(config);
+      (mockFs.writeJson as any).mockResolvedValue(undefined);
+
+      const result = await configManager.removeSkill('nonexistent');
+
+      expect(result.skills).toEqual([
+        { registry: 'codeaholicguy/ai-devkit', name: 'memory' }
+      ]);
+    });
+
+    it('throws when config file is not found', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(false);
+
+      await expect(configManager.removeSkill('dev-lifecycle')).rejects.toThrow(
+        'Config file not found'
+      );
+    });
+  });
+
+  describe('getSkillRegistries', () => {
+    it('returns registries from top-level registries field', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue({
+        version: '1.0.0',
+        environments: ['cursor'],
+        phases: [],
+        registries: {
+          'my-org/skills': 'https://github.com/my-org/skills.git',
+          'invalid/value': false
+        },
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      });
+
+      const registries = await configManager.getSkillRegistries();
+
+      expect(registries).toEqual({
+        'my-org/skills': 'https://github.com/my-org/skills.git'
+      });
+    });
+
+    it('returns empty object when no registries field exists', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue({
+        version: '1.0.0',
+        environments: ['cursor'],
+        phases: [],
+        skills: [{ registry: 'codeaholicguy/ai-devkit', name: 'debug' }],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      });
+
+      const registries = await configManager.getSkillRegistries();
+
+      expect(registries).toEqual({});
+    });
+  });
+
+  describe('getMemoryDbPath', () => {
+    it('returns undefined when config does not exist', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(false);
+
+      const result = await configManager.getMemoryDbPath();
+
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined when memory.path is missing', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue({
+        version: '1.0.0',
+        environments: [],
+        phases: [],
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      });
+
+      const result = await configManager.getMemoryDbPath();
+
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined when memory.path is blank or invalid', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue({
+        version: '1.0.0',
+        environments: [],
+        phases: [],
+        memory: { path: '   ' },
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      });
+
+      await expect(configManager.getMemoryDbPath()).resolves.toBeUndefined();
+
+      (mockFs.readJson as any).mockResolvedValue({
+        version: '1.0.0',
+        environments: [],
+        phases: [],
+        memory: { path: 42 },
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      });
+
+      await expect(configManager.getMemoryDbPath()).resolves.toBeUndefined();
+    });
+
+    it('returns absolute memory.path as-is', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue({
+        version: '1.0.0',
+        environments: [],
+        phases: [],
+        memory: { path: '/custom/memory.db' },
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      });
+
+      const result = await configManager.getMemoryDbPath();
+
+      expect(result).toBe('/custom/memory.db');
+      expect(mockPath.isAbsolute).toHaveBeenCalledWith('/custom/memory.db');
+    });
+
+    it('resolves relative memory.path from the config directory', async () => {
+      (mockFs.pathExists as any).mockResolvedValue(true);
+      (mockFs.readJson as any).mockResolvedValue({
+        version: '1.0.0',
+        environments: [],
+        phases: [],
+        memory: { path: '.ai-devkit/project-memory.db' },
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      });
+
+      const result = await configManager.getMemoryDbPath();
+
+      expect(mockPath.dirname).toHaveBeenCalledWith('/test/dir/.ai-devkit.json');
+      expect(mockPath.resolve).toHaveBeenCalledWith('/test/dir', '.ai-devkit/project-memory.db');
+      expect(result).toBe('/test/dir/.ai-devkit/project-memory.db');
     });
   });
 });

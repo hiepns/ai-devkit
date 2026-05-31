@@ -1,6 +1,6 @@
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { unlinkSync, existsSync } from 'fs';
+import { rmSync } from 'fs';
 import { DatabaseConnection } from '../../src/database/connection';
 import { initializeSchema } from '../../src/database/schema';
 import { ValidationError, DuplicateError, NotFoundError } from '../../src/utils/errors';
@@ -144,11 +144,9 @@ describe('update handler', () => {
 
     afterAll(() => {
         db.close();
-        try {
-            if (existsSync(testDbPath)) unlinkSync(testDbPath);
-            if (existsSync(testDbPath + '-wal')) unlinkSync(testDbPath + '-wal');
-            if (existsSync(testDbPath + '-shm')) unlinkSync(testDbPath + '-shm');
-        } catch { }
+        rmSync(testDbPath, { force: true });
+        rmSync(testDbPath + '-wal', { force: true });
+        rmSync(testDbPath + '-shm', { force: true });
     });
 
     beforeEach(() => {
@@ -239,14 +237,14 @@ describe('update handler', () => {
 
             // Mock Date to return a future timestamp to avoid same-millisecond flakiness
             const futureDate = new Date(Date.now() + 1000);
-            jest.spyOn(global, 'Date').mockImplementation(() => futureDate as unknown as Date);
+            vi.spyOn(global, 'Date').mockImplementation(() => futureDate as unknown as Date);
 
             updateKnowledgeDirect(db, {
                 id: stored.id,
                 tags: ['refreshed'],
             });
 
-            jest.restoreAllMocks();
+            vi.restoreAllMocks();
 
             const rowAfter = db.queryOne<KnowledgeRow>('SELECT * FROM knowledge WHERE id = ?', [stored.id]);
             expect(rowAfter?.updated_at).not.toBe(rowBefore?.updated_at);

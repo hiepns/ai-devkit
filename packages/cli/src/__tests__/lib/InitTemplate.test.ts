@@ -1,18 +1,19 @@
-import * as fs from 'fs-extra';
+import type { Mocked } from 'vitest';
+import fs from 'fs-extra';
 import * as path from 'path';
-import { loadInitTemplate } from '../../lib/InitTemplate';
+import { loadInitTemplate } from '../../lib/InitTemplate.js';
 
-jest.mock('fs-extra');
+vi.mock('fs-extra', async () => { const { makeFsExtraMock } = await import('../__shared__/fs-extra-mock.js'); return makeFsExtraMock(); });
 
 describe('InitTemplate', () => {
-  const mockFs = fs as jest.Mocked<typeof fs>;
+  const mockFs = fs as Mocked<typeof fs>;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('loads YAML template from relative path', async () => {
-    const cwdSpy = jest.spyOn(process, 'cwd').mockReturnValue('/repo');
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue('/repo');
     mockFs.pathExists.mockResolvedValue(true as never);
     mockFs.readFile.mockResolvedValue(`
 version: 1
@@ -85,6 +86,44 @@ environments:
 
     await expect(loadInitTemplate('/tmp/init.yaml')).rejects.toThrow(
       'Invalid template at /tmp/init.yaml: "environments[0]" has invalid value "invalid-env"'
+    );
+  });
+
+  it('loads template with paths.docs config', async () => {
+    mockFs.pathExists.mockResolvedValue(true as never);
+    mockFs.readFile.mockResolvedValue(`
+paths:
+  docs: .ai-docs
+environments:
+  - claude
+phases:
+  - requirements
+` as never);
+
+    const result = await loadInitTemplate('/tmp/init.yaml');
+
+    expect(result.paths?.docs).toBe('.ai-docs');
+    expect(result.environments).toEqual(['claude']);
+  });
+
+  it('throws when paths.docs is empty string', async () => {
+    mockFs.pathExists.mockResolvedValue(true as never);
+    mockFs.readFile.mockResolvedValue(`
+paths:
+  docs: "  "
+` as never);
+
+    await expect(loadInitTemplate('/tmp/init.yaml')).rejects.toThrow(
+      '"paths.docs" must be a non-empty string'
+    );
+  });
+
+  it('throws when paths is not an object', async () => {
+    mockFs.pathExists.mockResolvedValue(true as never);
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ paths: 'invalid' }) as never);
+
+    await expect(loadInitTemplate('/tmp/init.json')).rejects.toThrow(
+      '"paths" must be an object'
     );
   });
 

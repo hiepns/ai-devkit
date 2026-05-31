@@ -5,8 +5,22 @@
  * Manages adapter registration and aggregates results from all adapters.
  */
 
-import type { AgentAdapter, AgentInfo } from './adapters/AgentAdapter';
-import { AgentStatus } from './adapters/AgentAdapter';
+import type {
+    AgentAdapter,
+    AgentInfo,
+    SessionSummary,
+    ListSessionsOptions,
+} from './adapters/AgentAdapter.js';
+import { sortAgents, type AgentSortKey } from './utils/sortAgents.js';
+import { AgentRegistry, type RegistryEntry } from './utils/AgentRegistry.js';
+
+export interface ListAgentsOptions {
+    /**
+     * Sort key for the returned list. Defaults to `status`, which orders
+     * waiting → running → idle → unknown, then by name for stability.
+     */
+    sortBy?: AgentSortKey;
+}
 
 /**
  * Agent Manager Class
@@ -25,6 +39,11 @@ import { AgentStatus } from './adapters/AgentAdapter';
  */
 export class AgentManager {
     private adapters: Map<string, AgentAdapter> = new Map();
+    private registry: AgentRegistry;
+
+    constructor(registry: AgentRegistry = AgentRegistry.default()) {
+        this.registry = registry;
+    }
 
     /**
      * Register an adapter for a specific agent type
@@ -67,8 +86,18 @@ export class AgentManager {
     }
 
     /**
+     * Get a registered adapter by type
+     *
+     * @param type Agent type to look up
+     * @returns The adapter, or undefined if not registered
+     */
+    getAdapter(type: string): AgentAdapter | undefined {
+        return this.adapters.get(type);
+    }
+
+    /**
      * Check if an adapter is registered for a specific type
-     * 
+     *
      * @param type Agent type to check
      * @returns True if adapter is registered
      */
@@ -93,7 +122,7 @@ export class AgentManager {
      * });
      * ```
      */
-    async listAgents(): Promise<AgentInfo[]> {
+    async listAgents(options?: ListAgentsOptions): Promise<AgentInfo[]> {
         const allAgents: AgentInfo[] = [];
         const errors: Array<{ type: string; error: Error }> = [];
 
@@ -127,33 +156,84 @@ export class AgentManager {
             });
         }
 
-        // Sort by status priority (waiting first, then running, then idle)
-        return this.sortAgentsByStatus(allAgents);
+        const preExistingByPid = new Map(this.registry.list().map((e) => [e.pid, e]));
+        const entries = allAgents.map((agent) =>
+            this.toRegistryEntry(agent, preExistingByPid.get(agent.pid)),
+        );
+        if (entries.length > 0) this.registry.registerBatch(entries);
+        this.registry.prune();
+
+        for (const agent of allAgents) {
+            const entry = preExistingByPid.get(agent.pid);
+            if (entry) {
+                agent.name = entry.name;
+            }
+        }
+
+        const sortKey: AgentSortKey = options?.sortBy ?? 'status';
+        return sortAgents(allAgents, sortKey);
+    }
+
+    private toRegistryEntry(agent: AgentInfo, existing?: RegistryEntry): RegistryEntry {
+        return {
+            name: existing?.name ?? agent.name,
+            type: agent.type,
+            pid: agent.pid,
+            tmuxSession: existing?.tmuxSession ?? '',
+            cwd: agent.projectPath,
+            startedAt: existing?.startedAt ?? new Date().toISOString(),
+            sessionId: agent.sessionId,
+            sessionFilePath: agent.sessionFilePath ?? '',
+        };
     }
 
     /**
-     * Sort agents by status priority
-     * 
-     * Priority order: waiting > running > idle > unknown
-     * This ensures agents that need attention appear first.
-     * 
-     * @param agents Array of agents to sort
-     * @returns Sorted array of agents
+     * List historical sessions across every registered adapter.
+     *
+     * When `opts.type` is set, adapters whose `type` doesn't match are
+     * skipped without being called. The remaining adapters' results are
+     * merged and sorted by `lastActive` descending. Adapter failures are
+     * caught (one-line stderr warning) so one broken adapter doesn't hide
+     * the others.
+     *
+     * @param opts Filter options computed by the CLI; the manager passes
+     *   them through to each adapter unchanged.
      */
-    private sortAgentsByStatus(agents: AgentInfo[]): AgentInfo[] {
-        const statusPriority: Record<AgentStatus, number> = {
-            [AgentStatus.WAITING]: 0,
-            [AgentStatus.RUNNING]: 1,
-            [AgentStatus.IDLE]: 2,
-            [AgentStatus.UNKNOWN]: 3,
-        };
+    async listSessions(opts?: ListSessionsOptions): Promise<SessionSummary[]> {
+        const targetAdapters = Array.from(this.adapters.values()).filter(
+            (adapter) => opts?.type === undefined || adapter.type === opts.type,
+        );
 
-        return agents.sort((a, b) => {
-            const priorityA = statusPriority[a.status] ?? 999;
-            const priorityB = statusPriority[b.status] ?? 999;
-            return priorityA - priorityB;
-        });
+        const errors: Array<{ type: string; error: Error }> = [];
+
+        const results = await Promise.all(
+            targetAdapters.map(async (adapter) => {
+                try {
+                    return await adapter.listSessions(opts);
+                } catch (error) {
+                    const err = error instanceof Error ? error : new Error(String(error));
+                    errors.push({ type: adapter.type, error: err });
+                    return [];
+                }
+            }),
+        );
+
+        if (errors.length > 0) {
+            console.error(`Warning: ${errors.length} adapter(s) failed to list sessions:`);
+            for (const { type, error } of errors) {
+                console.error(`  - ${type}: ${error.message}`);
+            }
+        }
+
+        const merged: SessionSummary[] = [];
+        for (const list of results) {
+            merged.push(...list);
+        }
+
+        merged.sort((a, b) => b.lastActive.getTime() - a.lastActive.getTime());
+        return merged;
     }
+
 
     /**
      * Get count of registered adapters
@@ -180,6 +260,13 @@ export class AgentManager {
      */
     resolveAgent(input: string, agents: AgentInfo[]): AgentInfo | AgentInfo[] | null {
         if (!input || agents.length === 0) return null;
+
+        // Registry-first: if name is in registry and its PID is in the agent list, return it
+        const registryEntry = this.registry.lookup(input);
+        if (registryEntry) {
+            const registryAgent = agents.find((a) => a.pid === registryEntry.pid);
+            if (registryAgent) return registryAgent;
+        }
 
         const lowerInput = input.toLowerCase();
 

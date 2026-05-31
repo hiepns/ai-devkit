@@ -1,21 +1,30 @@
-import { PhaseSelector } from '../../lib/PhaseSelector';
-import { AVAILABLE_PHASES } from '../../types';
+import type { MockedFunction } from 'vitest';
+import inquirer from 'inquirer';
+import { PhaseSelector } from '../../lib/PhaseSelector.js';
+import { AVAILABLE_PHASES } from '../../types.js';
 
-jest.mock('inquirer');
+vi.mock('inquirer', () => ({
+  default: { prompt: vi.fn() },
+}));
+
+vi.mock('../../util/terminal-ui.js', () => ({
+  ui: { warning: vi.fn(), text: vi.fn(), breakline: vi.fn() },
+}));
+import { ui as mockUi } from '../../util/terminal-ui.js';
 
 describe('PhaseSelector', () => {
   let selector: PhaseSelector;
-  let mockPrompt: jest.MockedFunction<any>;
+  let mockPrompt: MockedFunction<any>;
 
   beforeEach(() => {
     selector = new PhaseSelector();
-    const inquirer = require('inquirer');
-    mockPrompt = jest.fn();
+    
+    mockPrompt = vi.fn();
     inquirer.prompt = mockPrompt;
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('selectPhases', () => {
@@ -61,38 +70,27 @@ describe('PhaseSelector', () => {
   });
 
   describe('displaySelectionSummary', () => {
-    let consoleSpy: jest.SpyInstance;
-
-    beforeEach(() => {
-      consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    });
-
-    afterEach(() => {
-      consoleSpy.mockRestore();
-    });
-
     it('should display nothing selected message for empty array', () => {
       selector.displaySelectionSummary([]);
 
-      expect(consoleSpy).toHaveBeenCalledWith('No phases selected.');
-      expect(consoleSpy).toHaveBeenCalledTimes(1);
+      expect(mockUi.warning).toHaveBeenCalledWith('No phases selected.');
     });
 
     it('should display selected phases with checkmarks', () => {
       selector.displaySelectionSummary(['requirements', 'design']);
 
-      expect(consoleSpy).toHaveBeenCalledWith('\nSelected phases:');
-      expect(consoleSpy).toHaveBeenCalledWith('  Requirements & Problem Understanding');
-      expect(consoleSpy).toHaveBeenCalledWith('  System Design & Architecture');
-      expect(consoleSpy).toHaveBeenCalledWith('');
+      expect(mockUi.text).toHaveBeenCalledWith('\nSelected phases:');
+      expect(mockUi.text).toHaveBeenCalledWith('  Requirements & Problem Understanding');
+      expect(mockUi.text).toHaveBeenCalledWith('  System Design & Architecture');
+      expect(mockUi.breakline).toHaveBeenCalled();
     });
 
     it('should handle single phase selection', () => {
       selector.displaySelectionSummary(['requirements']);
 
-      expect(consoleSpy).toHaveBeenCalledWith('\nSelected phases:');
-      expect(consoleSpy).toHaveBeenCalledWith('  Requirements & Problem Understanding');
-      expect(consoleSpy).toHaveBeenCalledWith('');
+      expect(mockUi.text).toHaveBeenCalledWith('\nSelected phases:');
+      expect(mockUi.text).toHaveBeenCalledWith('  Requirements & Problem Understanding');
+      expect(mockUi.breakline).toHaveBeenCalled();
     });
   });
 });

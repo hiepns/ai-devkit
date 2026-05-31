@@ -20,12 +20,12 @@ These environments are fully supported with stable integrations.
 ### [Cursor](https://cursor.com/)
 **What AI DevKit provides:**
 - `AGENTS.md` — Agent instructions for [Cursor](https://cursor.com/docs/context/rules)
-- `.cursor/commands/` — Custom [slash commands](https://cursor.com/docs/context/commands) for structured development workflows
+- `.cursor/commands/` — Custom [slash commands](https://cursor.com/docs/context/commands) for the AI DevKit engineering workflow
 - `.cursor/rules/` — [Editor rules](https://cursor.com/docs/context/rules) for consistent coding standards
 
 ### [Claude Code](https://www.claude.com/product/claude-code)
 **What AI DevKit provides:**
-- `AGENTS.md` — [Claude workspace configuration](https://www.anthropic.com/engineering/claude-code-best-practices) and context
+- `CLAUDE.md` — Claude Code workspace instructions and context
 - `.claude/commands/` — Custom [slash commands](https://code.claude.com/docs/en/slash-commands)
 
 ### [GitHub Copilot](https://github.com/features/copilot)
@@ -38,7 +38,7 @@ These environments are fully supported with stable integrations.
 - `.gemini/commands/` — Gemini [custom commands](https://geminicli.com/docs/cli/commands/)
 
 ### [OpenAI Codex](https://chatgpt.com/en-SE/features/codex)
-> **Note:** Codex requires global setup because it reads commands from a system-wide location rather than your project directory.
+> **Note:** `ai-devkit init` and `ai-devkit install` set up Codex project files such as `AGENTS.md` and `.codex/commands/`. If you also want globally available Codex prompts, run `ai-devkit setup --global` to install them to `~/.codex/prompts/`.
 >
 > ```bash
 > ai-devkit setup --global
@@ -112,11 +112,11 @@ Your selections are saved in `.ai-devkit.json`:
 
 ```json
 {
-  "version": "0.4.0",
+  "version": "0.21.1",
   "environments": ["cursor", "claude", "github"],
-  "initializedPhases": ["requirements", "design"],
-  "createdAt": "2025-10-31T...",
-  "updatedAt": "2025-10-31T..."
+  "phases": ["requirements", "design"],
+  "createdAt": "2026-04-04T...",
+  "updatedAt": "2026-04-04T..."
 }
 ```
 

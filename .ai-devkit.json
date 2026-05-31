@@ -3,11 +3,13 @@
   "environments": [
     "cursor",
     "claude",
+    "github",
+    "gemini",
     "codex",
     "antigravity"
   ],
   "createdAt": "2025-12-28T13:35:45.251Z",
-  "updatedAt": "2026-02-23T12:41:04.369Z",
+  "updatedAt": "2026-05-28T06:26:09.553Z",
   "phases": [
     "requirements",
     "design",
@@ -26,15 +28,35 @@
     },
     {
       "registry": "codeaholicguy/ai-devkit",
-      "name": "debug"
-    },
-    {
-      "registry": "codeaholicguy/ai-devkit",
       "name": "simplify-implementation"
     },
     {
       "registry": "codeaholicguy/ai-devkit",
       "name": "technical-writer"
+    },
+    {
+      "registry": "codeaholicguy/ai-devkit",
+      "name": "verify"
+    },
+    {
+      "registry": "codeaholicguy/ai-devkit",
+      "name": "tdd"
+    },
+    {
+      "registry": "codeaholicguy/ai-devkit",
+      "name": "structured-debug"
+    },
+    {
+      "registry": "codeaholicguy/ai-devkit",
+      "name": "document-code"
+    },
+    {
+      "registry": "codeaholicguy/ai-devkit",
+      "name": "security-review"
+    },
+    {
+      "registry": "vercel-labs/agent-skills",
+      "name": "react-best-practices"
     }
   ]
 }

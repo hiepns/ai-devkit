@@ -1,56 +1,109 @@
-import * as fs from "fs-extra";
+import type { MockedClass, Mocked, Mock } from 'vitest';
+import fs from "fs-extra";
 import * as os from "os";
 import * as path from "path";
-import { SkillManager } from "../../lib/SkillManager";
-import { ConfigManager } from "../../lib/Config";
-import { EnvironmentSelector } from "../../lib/EnvironmentSelector";
-import { GlobalConfigManager } from "../../lib/GlobalConfig";
-import * as gitUtil from "../../util/git";
-import * as skillUtil from "../../util/skill";
+import { SkillManager } from "../../lib/SkillManager.js";
+import { ConfigManager } from "../../lib/Config.js";
+import { EnvironmentSelector } from "../../lib/EnvironmentSelector.js";
+import { GlobalConfigManager } from "../../lib/GlobalConfig.js";
+import * as gitUtil from "../../util/git.js";
+import * as skillUtil from "../../util/skill.js";
 
-jest.mock("fs-extra", () => ({
-  pathExists: jest.fn(),
-  ensureDir: jest.fn(),
-  symlink: jest.fn(),
-  copy: jest.fn(),
-  remove: jest.fn(),
-  readdir: jest.fn(),
-  realpath: jest.fn(),
-  readJson: jest.fn(),
-  writeJson: jest.fn(),
+vi.mock("fs-extra", () => ({
+  default: {
+    pathExists: vi.fn(),
+    ensureDir: vi.fn(),
+    symlink: vi.fn(),
+    copy: vi.fn(),
+    remove: vi.fn(),
+    readdir: vi.fn(),
+    realpath: vi.fn(),
+    readJson: vi.fn(),
+    writeJson: vi.fn(),
+  },
 }));
-jest.mock("../../lib/Config");
-jest.mock("../../lib/EnvironmentSelector");
-jest.mock("../../lib/GlobalConfig");
-jest.mock("../../util/git");
-jest.mock("../../util/skill");
-jest.mock("ora", () => {
-  return jest.fn(() => ({
-    start: jest.fn().mockReturnThis(),
-    succeed: jest.fn().mockReturnThis(),
-    fail: jest.fn().mockReturnThis(),
-    warn: jest.fn().mockReturnThis(),
-    stop: jest.fn().mockReturnThis(),
+vi.mock("../../lib/Config.js", () => ({
+  ConfigManager: vi.fn(() => ({
+    addSkill: vi.fn(),
+    create: vi.fn(),
+    getSkillRegistries: vi.fn(),
+    read: vi.fn(),
+    removeSkill: vi.fn(),
+    update: vi.fn(),
+  })),
+}));
+vi.mock("../../lib/EnvironmentSelector.js", () => ({
+  EnvironmentSelector: vi.fn(() => ({
+    selectEnvironments: vi.fn(),
+    selectGlobalEnvironments: vi.fn(),
+    selectSkillEnvironments: vi.fn(),
+    selectGlobalSkillEnvironments: vi.fn(),
+    confirmOverride: vi.fn(),
+    displaySelectionSummary: vi.fn(),
+  })),
+}));
+vi.mock("../../lib/GlobalConfig.js", () => ({
+  GlobalConfigManager: vi.fn(() => ({
+    getSkillRegistries: vi.fn(),
+  })),
+}));
+vi.mock("../../util/git.js", () => ({
+  ensureGitInstalled: vi.fn(),
+  cloneRepository: vi.fn(),
+  pullRepository: vi.fn(),
+  isGitRepository: vi.fn(),
+  fetchGitHead: vi.fn(),
+  isInsideGitWorkTreeSync: vi.fn(),
+  localBranchExistsSync: vi.fn(),
+  getWorktreePathsForBranchSync: vi.fn(),
+}));
+vi.mock("../../util/skill.js", () => ({
+  validateRegistryId: vi.fn(),
+  validateSkillName: vi.fn(),
+  isValidSkillName: vi.fn(),
+  extractSkillDescription: vi.fn(),
+}));
+vi.mock("../../util/terminal.js", () => ({
+  isInteractiveTerminal: vi.fn(() => true),
+}));
+vi.mock("inquirer", () => ({
+  default: {
+    prompt: vi.fn(),
+  },
+}));
+
+vi.mock("ora", () => ({
+  default: vi.fn(() => ({
+    start: vi.fn().mockReturnThis(),
+    succeed: vi.fn().mockReturnThis(),
+    fail: vi.fn().mockReturnThis(),
+    warn: vi.fn().mockReturnThis(),
+    stop: vi.fn().mockReturnThis(),
     text: '',
     isSpinning: false,
-  }));
-});
+  })),
+}));
 
-const mockedFs = fs as jest.Mocked<typeof fs>;
-const MockedConfigManager = ConfigManager as jest.MockedClass<
+import { isInteractiveTerminal } from "../../util/terminal.js";
+import inquirer from "inquirer";
+const mockIsInteractiveTerminal = isInteractiveTerminal as Mock;
+const mockPrompt = inquirer.prompt as unknown as Mock;
+
+const mockedFs = fs as Mocked<typeof fs>;
+const MockedConfigManager = ConfigManager as MockedClass<
   typeof ConfigManager
 >;
-const MockedEnvironmentSelector = EnvironmentSelector as jest.MockedClass<
+const MockedEnvironmentSelector = EnvironmentSelector as MockedClass<
   typeof EnvironmentSelector
 >;
-const MockedGlobalConfigManager = GlobalConfigManager as jest.MockedClass<
+const MockedGlobalConfigManager = GlobalConfigManager as MockedClass<
   typeof GlobalConfigManager
 >;
-const mockedGitUtil = gitUtil as jest.Mocked<typeof gitUtil>;
-const mockedSkillUtil = skillUtil as jest.Mocked<typeof skillUtil>;
+const mockedGitUtil = gitUtil as Mocked<typeof gitUtil>;
+const mockedSkillUtil = skillUtil as Mocked<typeof skillUtil>;
 
 function mockFetch(response: any) {
-  global.fetch = jest.fn().mockResolvedValue({
+  global.fetch = vi.fn().mockResolvedValue({
     ok: true,
     json: () => Promise.resolve(response)
   });
@@ -60,21 +113,22 @@ function mockFetch(response: any) {
 
 describe("SkillManager", () => {
   let skillManager: SkillManager;
-  let mockConfigManager: jest.Mocked<ConfigManager>;
-  let mockEnvironmentSelector: jest.Mocked<EnvironmentSelector>;
-  let mockGlobalConfigManager: jest.Mocked<GlobalConfigManager>;
+  let mockConfigManager: Mocked<ConfigManager>;
+  let mockEnvironmentSelector: Mocked<EnvironmentSelector>;
+  let mockGlobalConfigManager: Mocked<GlobalConfigManager>;
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    jest.spyOn(console, "log").mockImplementation(() => { });
+    vi.clearAllMocks();
+    vi.spyOn(console, "log").mockImplementation(() => { });
 
-    mockConfigManager = new MockedConfigManager() as jest.Mocked<ConfigManager>;
+    mockConfigManager = new MockedConfigManager() as Mocked<ConfigManager>;
     mockEnvironmentSelector =
-      new MockedEnvironmentSelector() as jest.Mocked<EnvironmentSelector>;
+      new MockedEnvironmentSelector() as Mocked<EnvironmentSelector>;
     mockGlobalConfigManager =
-      new MockedGlobalConfigManager() as jest.Mocked<GlobalConfigManager>;
+      new MockedGlobalConfigManager() as Mocked<GlobalConfigManager>;
 
     mockGlobalConfigManager.getSkillRegistries.mockResolvedValue({});
+    mockConfigManager.getSkillRegistries.mockResolvedValue({});
 
     skillManager = new SkillManager(
       mockConfigManager,
@@ -84,12 +138,13 @@ describe("SkillManager", () => {
 
     mockedSkillUtil.validateRegistryId.mockImplementation(() => { });
     mockedSkillUtil.validateSkillName.mockImplementation(() => { });
+    mockedSkillUtil.isValidSkillName.mockImplementation((name: string) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name));
     mockedGitUtil.ensureGitInstalled.mockResolvedValue(undefined);
     mockConfigManager.addSkill.mockResolvedValue({} as any);
   });
 
   afterEach(() => {
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
   });
 
   describe("addSkill", () => {
@@ -111,16 +166,63 @@ describe("SkillManager", () => {
       });
 
       mockedGitUtil.cloneRepository.mockResolvedValue(mockRepoPath);
+      mockedGitUtil.isGitRepository.mockResolvedValue(true);
+      mockedGitUtil.pullRepository.mockResolvedValue(undefined);
 
       (mockedFs.pathExists as any).mockResolvedValue(true);
       (mockedFs.ensureDir as any).mockResolvedValue(undefined);
       (mockedFs.symlink as any).mockResolvedValue(undefined);
       (mockedFs.copy as any).mockResolvedValue(undefined);
+      (mockedFs.readdir as any).mockResolvedValue([]);
+      (mockedFs.readFile as any)?.mockResolvedValue?.('');
 
       mockConfigManager.read.mockResolvedValue({
         environments: ["cursor", "claude"],
       } as any);
+      mockEnvironmentSelector.selectGlobalSkillEnvironments.mockResolvedValue([
+        "cursor",
+        "claude",
+      ]);
     });
+
+    const configureRegistrySkills = (skillNames: string[]) => {
+      (mockedFs.readdir as any).mockResolvedValue(
+        skillNames.map(name => ({ name, isDirectory: () => true })),
+      );
+      (mockedFs.pathExists as any).mockImplementation((checkPath: string) => {
+        if (checkPath === mockRepoPath) {
+          return Promise.resolve(true);
+        }
+        if (checkPath.endsWith(`${path.sep}skills`)) {
+          return Promise.resolve(true);
+        }
+
+        for (const skillName of skillNames) {
+          if (checkPath.endsWith(`${path.sep}${skillName}${path.sep}SKILL.md`)) {
+            return Promise.resolve(true);
+          }
+          if (checkPath.includes(`${path.sep}skills${path.sep}${skillName}`)) {
+            return Promise.resolve(true);
+          }
+        }
+
+        return Promise.resolve(false);
+      });
+      (mockedFs.readFile as any) = vi.fn().mockImplementation((filePath: string) => {
+        const matchedSkill = skillNames.find(skillName =>
+          filePath.endsWith(`${skillName}${path.sep}SKILL.md`),
+        );
+
+        return Promise.resolve(
+          matchedSkill === "frontend-design"
+            ? "description: Frontend skill"
+            : "description: Debug skill",
+        );
+      });
+      mockedSkillUtil.extractSkillDescription.mockImplementation((content: string) =>
+        content.replace("description: ", ""),
+      );
+    };
 
     it("should successfully add a skill", async () => {
       await skillManager.addSkill(mockRegistryId, mockSkillName);
@@ -138,9 +240,64 @@ describe("SkillManager", () => {
       });
     });
 
+    it("should install to home directory when global option is enabled", async () => {
+      (mockedFs.pathExists as any).mockImplementation((checkPath: string) => {
+        if (
+          checkPath === path.join(os.homedir(), ".cursor", "skills", mockSkillName)
+          || checkPath === path.join(os.homedir(), ".claude", "skills", mockSkillName)
+        ) {
+          return Promise.resolve(false);
+        }
+        return Promise.resolve(true);
+      });
+
+      await skillManager.addSkill(mockRegistryId, mockSkillName, { global: true });
+
+      expect(mockedFs.symlink).toHaveBeenCalledWith(
+        expect.any(String),
+        path.join(os.homedir(), ".cursor", "skills", mockSkillName),
+        "dir",
+      );
+      expect(mockEnvironmentSelector.selectGlobalSkillEnvironments).toHaveBeenCalled();
+      expect(mockConfigManager.read).not.toHaveBeenCalled();
+      expect(mockConfigManager.create).not.toHaveBeenCalled();
+      expect(mockConfigManager.addSkill).not.toHaveBeenCalled();
+    });
+
+    it("should throw error when global env does not support skills", async () => {
+      await expect(
+        skillManager.addSkill(mockRegistryId, mockSkillName, { global: true, environments: ["windsurf"] }),
+      ).rejects.toThrow("Global skill installation is not supported for: windsurf");
+    });
+
+    it("should throw error when env is provided without global option", async () => {
+      await expect(
+        skillManager.addSkill(mockRegistryId, mockSkillName, { environments: ["claude"] }),
+      ).rejects.toThrow("--env can only be used with --global");
+    });
+
+    it("should install only selected global environments", async () => {
+      (mockedFs.pathExists as any).mockImplementation((checkPath: string) => {
+        if (checkPath === path.join(os.homedir(), ".claude", "skills", mockSkillName)) {
+          return Promise.resolve(false);
+        }
+        return Promise.resolve(true);
+      });
+
+      await skillManager.addSkill(mockRegistryId, mockSkillName, { global: true, environments: ["claude"] });
+
+      expect(mockedFs.symlink).toHaveBeenCalledTimes(1);
+      expect(mockedFs.symlink).toHaveBeenCalledWith(
+        expect.any(String),
+        path.join(os.homedir(), ".claude", "skills", mockSkillName),
+        "dir",
+      );
+      expect(mockEnvironmentSelector.selectGlobalSkillEnvironments).not.toHaveBeenCalled();
+    });
+
     it("should fetch registry using fetch API", async () => {
       const originalFetch = global.fetch;
-      global.fetch = jest.fn().mockResolvedValue({
+      global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ registries: { [mockRegistryId]: mockGitUrl } })
       });
@@ -156,7 +313,7 @@ describe("SkillManager", () => {
 
     it("should throw error if registry ID not found", async () => {
       const originalFetch = global.fetch;
-      global.fetch = jest.fn().mockResolvedValue({
+      global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({
           registries: {
@@ -216,10 +373,60 @@ describe("SkillManager", () => {
       );
     });
 
+    it("should prefer project registry URL over global and default", async () => {
+      const defaultGitUrl = "https://github.com/default/skills.git";
+      const globalGitUrl = "https://github.com/global/skills.git";
+      const projectGitUrl = "https://github.com/project/skills.git";
+
+      mockFetch({
+        registries: {
+          [mockRegistryId]: defaultGitUrl,
+        },
+      });
+
+      mockGlobalConfigManager.getSkillRegistries.mockResolvedValue({
+        [mockRegistryId]: globalGitUrl,
+      });
+      mockConfigManager.getSkillRegistries.mockResolvedValue({
+        [mockRegistryId]: projectGitUrl,
+      });
+
+      const repoPath = path.join(
+        os.homedir(),
+        ".ai-devkit",
+        "skills",
+        mockRegistryId,
+      );
+
+      (mockedFs.pathExists as any).mockImplementation((checkPath: string) => {
+        if (checkPath === repoPath) {
+          return Promise.resolve(false);
+        }
+
+        if (checkPath.includes(`${path.sep}skills${path.sep}${mockSkillName}`)) {
+          return Promise.resolve(true);
+        }
+
+        if (checkPath.endsWith(`${path.sep}SKILL.md`)) {
+          return Promise.resolve(true);
+        }
+
+        return Promise.resolve(true);
+      });
+
+      await skillManager.addSkill(mockRegistryId, mockSkillName);
+
+      expect(mockedGitUtil.cloneRepository).toHaveBeenCalledWith(
+        path.join(os.homedir(), ".ai-devkit", "skills"),
+        mockRegistryId,
+        projectGitUrl,
+      );
+    });
+
     it("should read custom registries from global config", async () => {
       const customGitUrl = "https://github.com/custom/skills.git";
-      const { GlobalConfigManager: RealGlobalConfigManager } = jest.requireActual(
-        "../../lib/GlobalConfig",
+      const { GlobalConfigManager: RealGlobalConfigManager } = await vi.importActual<typeof import("../../lib/GlobalConfig.js")>(
+        "../../lib/GlobalConfig.js",
       );
       const realGlobalConfigManager = new RealGlobalConfigManager();
 
@@ -243,10 +450,8 @@ describe("SkillManager", () => {
       });
 
       (mockedFs.readJson as any).mockResolvedValue({
-        skills: {
-          registries: {
-            [mockRegistryId]: customGitUrl,
-          },
+        registries: {
+          [mockRegistryId]: customGitUrl,
         },
       });
 
@@ -361,6 +566,7 @@ describe("SkillManager", () => {
     });
 
     it("should create config if missing", async () => {
+      mockIsInteractiveTerminal.mockReturnValue(true);
       mockConfigManager.read.mockResolvedValue(null);
       mockConfigManager.create.mockResolvedValue({
         environments: [],
@@ -378,6 +584,35 @@ describe("SkillManager", () => {
       expect(mockConfigManager.update).toHaveBeenCalledWith({
         environments: ["cursor"],
       });
+    });
+
+    it("should select environments when config exists but has no environments", async () => {
+      mockIsInteractiveTerminal.mockReturnValue(true);
+      mockConfigManager.read.mockResolvedValue({
+        environments: [],
+      } as any);
+      mockEnvironmentSelector.selectSkillEnvironments.mockResolvedValue([
+        "claude",
+      ]);
+
+      await skillManager.addSkill(mockRegistryId, mockSkillName);
+
+      expect(mockConfigManager.create).not.toHaveBeenCalled();
+      expect(mockEnvironmentSelector.selectSkillEnvironments).toHaveBeenCalled();
+      expect(mockConfigManager.update).toHaveBeenCalledWith({
+        environments: ["claude"],
+      });
+    });
+
+    it("should throw in non-interactive mode when no environments configured", async () => {
+      mockIsInteractiveTerminal.mockReturnValue(false);
+      mockConfigManager.read.mockResolvedValue({
+        environments: [],
+      } as any);
+
+      await expect(
+        skillManager.addSkill(mockRegistryId, mockSkillName),
+      ).rejects.toThrow('No environments configured. Run "ai-devkit init" or add "environments" in .ai-devkit.json.');
     });
 
     it("should throw error if no skill-capable environments configured", async () => {
@@ -399,6 +634,140 @@ describe("SkillManager", () => {
       expect(mockedSkillUtil.validateSkillName).toHaveBeenCalledWith(
         mockSkillName,
       );
+    });
+
+    it("should prompt for multiple skill selection when skill name is omitted", async () => {
+      configureRegistrySkills(["frontend-design", "debug"]);
+      mockPrompt.mockResolvedValue({ selectedSkills: ["debug", "frontend-design"] });
+
+      mockIsInteractiveTerminal.mockReturnValue(true);
+
+      await skillManager.addSkill(mockRegistryId, undefined as any);
+
+      expect(mockPrompt).toHaveBeenCalled();
+      expect(mockedSkillUtil.validateSkillName).toHaveBeenCalledWith("debug");
+      expect(mockedSkillUtil.validateSkillName).toHaveBeenCalledWith("frontend-design");
+      expect(mockConfigManager.addSkill).toHaveBeenNthCalledWith(1, {
+        registry: mockRegistryId,
+        name: "debug",
+      });
+      expect(mockConfigManager.addSkill).toHaveBeenNthCalledWith(2, {
+        registry: mockRegistryId,
+        name: "frontend-design",
+      });
+      expect(mockConfigManager.addSkill).toHaveBeenCalledTimes(2);
+    });
+
+    it("should fail when skill name is omitted in non-interactive mode", async () => {
+      mockIsInteractiveTerminal.mockReturnValue(false);
+
+      await expect(
+        skillManager.addSkill(mockRegistryId, undefined as any),
+      ).rejects.toThrow('Skill name is required in non-interactive mode. Re-run with: ai-devkit skill add <registry> <skill-name>');
+
+      expect(mockPrompt).not.toHaveBeenCalled();
+    });
+
+    it("should use cached registry contents for multi-selection when pull fails", async () => {
+      configureRegistrySkills(["debug", "frontend-design"]);
+      mockedGitUtil.pullRepository.mockRejectedValue(new Error('network down'));
+      mockPrompt.mockResolvedValue({ selectedSkills: ["debug", "frontend-design"] });
+
+      mockIsInteractiveTerminal.mockReturnValue(true);
+
+      await skillManager.addSkill(mockRegistryId, undefined as any);
+
+      expect(mockPrompt).toHaveBeenCalled();
+      expect(mockConfigManager.addSkill).toHaveBeenCalledTimes(2);
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining("⚠"),
+        expect.stringContaining("Using cached registry contents"),
+      );
+    });
+
+    it("should stop without installing when skill selection is cancelled", async () => {
+      configureRegistrySkills(["debug"]);
+      mockPrompt.mockRejectedValue(new Error('User cancelled'));
+
+      mockIsInteractiveTerminal.mockReturnValue(true);
+
+      await expect(
+        skillManager.addSkill(mockRegistryId, undefined as any),
+      ).rejects.toThrow('Skill selection cancelled.');
+
+      expect(mockConfigManager.addSkill).not.toHaveBeenCalled();
+      expect(mockedFs.symlink).not.toHaveBeenCalled();
+    });
+
+    it("should throw a clear error when the registry has no valid skills", async () => {
+      (mockedFs.readdir as any).mockResolvedValue([
+        { name: "broken-skill", isDirectory: () => true },
+      ]);
+      (mockedFs.pathExists as any).mockImplementation((checkPath: string) => {
+        if (checkPath === mockRepoPath) {
+          return Promise.resolve(true);
+        }
+        if (checkPath.endsWith(`${path.sep}skills`)) {
+          return Promise.resolve(true);
+        }
+        return Promise.resolve(false);
+      });
+
+      mockIsInteractiveTerminal.mockReturnValue(true);
+
+      await expect(
+        skillManager.addSkill(mockRegistryId, undefined as any),
+      ).rejects.toThrow(`No valid skills found in ${mockRegistryId}.`);
+
+      expect(mockPrompt).not.toHaveBeenCalled();
+    });
+
+    it("should support global installation after interactive multi-selection", async () => {
+      configureRegistrySkills(["debug", "frontend-design"]);
+      mockPrompt.mockResolvedValue({ selectedSkills: ["debug", "frontend-design"] });
+      (mockedFs.pathExists as any).mockImplementation((checkPath: string) => {
+        if (checkPath === path.join(os.homedir(), ".claude", "skills", "debug")) {
+          return Promise.resolve(false);
+        }
+        if (checkPath === path.join(os.homedir(), ".claude", "skills", "frontend-design")) {
+          return Promise.resolve(false);
+        }
+        if (checkPath === mockRepoPath) {
+          return Promise.resolve(true);
+        }
+        if (checkPath.endsWith(`${path.sep}skills`)) {
+          return Promise.resolve(true);
+        }
+        if (checkPath.endsWith(`${path.sep}debug${path.sep}SKILL.md`)) {
+          return Promise.resolve(true);
+        }
+        if (checkPath.endsWith(`${path.sep}frontend-design${path.sep}SKILL.md`)) {
+          return Promise.resolve(true);
+        }
+        if (checkPath.includes(`${path.sep}skills${path.sep}debug`)) {
+          return Promise.resolve(true);
+        }
+        if (checkPath.includes(`${path.sep}skills${path.sep}frontend-design`)) {
+          return Promise.resolve(true);
+        }
+        return Promise.resolve(false);
+      });
+
+      mockIsInteractiveTerminal.mockReturnValue(true);
+
+      await skillManager.addSkill(mockRegistryId, undefined as any, { global: true, environments: ["claude"] });
+
+      expect(mockedFs.symlink).toHaveBeenCalledWith(
+        expect.any(String),
+        path.join(os.homedir(), ".claude", "skills", "debug"),
+        "dir",
+      );
+      expect(mockedFs.symlink).toHaveBeenCalledWith(
+        expect.any(String),
+        path.join(os.homedir(), ".claude", "skills", "frontend-design"),
+        "dir",
+      );
+      expect(mockConfigManager.addSkill).not.toHaveBeenCalled();
     });
   });
 
@@ -448,8 +817,8 @@ describe("SkillManager", () => {
         },
       ] as any);
 
-      const os = require("os");
-      const pathModule = require("path");
+      
+      const pathModule = path;
       const skillCacheDir = pathModule.join(os.homedir(), ".ai-devkit", "skills");
 
       (mockedFs.realpath as any).mockImplementation((skillPath: any) =>
@@ -563,6 +932,7 @@ describe("SkillManager", () => {
 
       (mockedFs.pathExists as any).mockResolvedValue(true);
       (mockedFs.remove as any).mockResolvedValue(undefined);
+      mockConfigManager.removeSkill.mockResolvedValue({} as any);
     });
 
     it("should validate skill name", async () => {
@@ -590,6 +960,20 @@ describe("SkillManager", () => {
         expect.stringContaining("✔"),
         expect.stringContaining("Successfully removed"),
       );
+    });
+
+    it("should update config to remove skill entry after successful removal", async () => {
+      await skillManager.removeSkill(mockSkillName);
+
+      expect(mockConfigManager.removeSkill).toHaveBeenCalledWith(mockSkillName);
+    });
+
+    it("should not update config when skill files are not found", async () => {
+      (mockedFs.pathExists as any).mockResolvedValue(false);
+
+      await skillManager.removeSkill(mockSkillName);
+
+      expect(mockConfigManager.removeSkill).not.toHaveBeenCalled();
     });
 
     it("should handle skill not found gracefully", async () => {
@@ -645,7 +1029,7 @@ describe("SkillManager", () => {
   describe("updateSkills", () => {
 
     beforeEach(() => {
-      jest.spyOn(console, "log").mockImplementation(() => { });
+      vi.spyOn(console, "log").mockImplementation(() => { });
       mockedGitUtil.ensureGitInstalled.mockResolvedValue(undefined);
     });
 

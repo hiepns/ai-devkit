@@ -1,9 +1,11 @@
 # @ai-devkit/memory
 
-A lightweight MCP-based memory service for AI agents. Store and retrieve knowledge using SQLite with full-text search.
+A local MCP-based memory service for AI coding agents. Store project decisions, coding conventions, and reusable fixes so agents can retrieve them across sessions with SQLite full-text search.
 
 [![npm version](https://img.shields.io/npm/v/@ai-devkit/memory.svg)](https://www.npmjs.com/package/@ai-devkit/memory)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+Most users get this automatically through `ai-devkit init`. Install `@ai-devkit/memory` directly when you want to wire the MCP memory server into your own MCP client configuration.
 
 ## Features
 
@@ -34,11 +36,13 @@ Add to your MCP client configuration (e.g., Claude Code, Cursor):
 }
 ```
 
+Example developer use case: after deciding that all API responses must use DTOs, store that rule once. Future agent sessions can search memory before implementing new endpoints instead of asking you to repeat the convention.
+
 ### Store Knowledge
 
 ```json
 {
-  "tool": "memory.storeKnowledge",
+  "tool": "memory_storeKnowledge",
   "arguments": {
     "title": "Always use Response DTOs for API endpoints",
     "content": "When building REST APIs, always use Response DTOs instead of returning domain entities directly.",
@@ -52,7 +56,7 @@ Add to your MCP client configuration (e.g., Claude Code, Cursor):
 
 ```json
 {
-  "tool": "memory.searchKnowledge",
+  "tool": "memory_searchKnowledge",
   "arguments": {
     "query": "building an API endpoint",
     "contextTags": ["api"],

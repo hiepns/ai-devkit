@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { initCommand } from './commands/init';
-import { phaseCommand } from './commands/phase';
-import { setupCommand } from './commands/setup';
-import { lintCommand } from './commands/lint';
-import { installCommand } from './commands/install';
-import { registerMemoryCommand } from './commands/memory';
-import { registerSkillCommand } from './commands/skill';
-import { registerAgentCommand } from './commands/agent';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { version } = require('../package.json') as { version: string };
+import { initCommand } from './commands/init.js';
+import { phaseCommand } from './commands/phase.js';
+import { setupCommand } from './commands/setup.js';
+import { lintCommand } from './commands/lint.js';
+import { installCommand } from './commands/install.js';
+import { registerMemoryCommand } from './commands/memory.js';
+import { registerSkillCommand } from './commands/skill.js';
+import { registerAgentCommand } from './commands/agent.js';
+import { registerChannelCommand } from './commands/channel.js';
+import { registerDocsCommand } from './commands/docs.js';
+import pkg from '../package.json' with { type: 'json' };
+const { version } = pkg as { version: string };
 
 const program = new Command();
 
@@ -26,6 +28,10 @@ program
   .option('-a, --all', 'Initialize all phases')
   .option('-p, --phases <phases>', 'Comma-separated list of phases to initialize')
   .option('-t, --template <path>', 'Initialize from template file (.yaml, .yml, .json)')
+  .option('-d, --docs-dir <path>', 'Custom directory for AI documentation (default: docs/ai)')
+  .option('--built-in', 'Install AI DevKit built-in skills without prompting (useful for CI/non-interactive runs)')
+  .option('-y, --yes', 'Run non-interactively. Without -t, requires -e <env> and one of -a/-p. Existing files are kept unless --overwrite is also passed.')
+  .option('--overwrite', 'With --yes, overwrite existing environments and phase files instead of skipping them')
   .action(initCommand);
 
 program
@@ -56,5 +62,7 @@ program
 registerMemoryCommand(program);
 registerSkillCommand(program);
 registerAgentCommand(program);
+registerChannelCommand(program);
+registerDocsCommand(program);
 
 program.parse();

@@ -1,5 +1,6 @@
 import { getRoadmap } from '@/lib/content/loader';
-import MarkdownContent from '@/components/MarkdownContent';
+import type { RoadmapItem as RoadmapItemType } from '@/lib/content/types';
+
 import type { Metadata } from 'next';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://ai-devkit.com';
@@ -7,11 +8,11 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://ai-devkit.com';
 export const metadata: Metadata = {
   title: 'Roadmap',
   description:
-    "The development roadmap for AI DevKit - see what we're building, current progress, and upcoming features for AI-assisted development.",
+    "The AI DevKit roadmap for making AI coding agents follow the same repeatable engineering workflow across tools.",
   keywords: [
     'AI DevKit roadmap',
     'AI DevKit features',
-    'development roadmap',
+    'AI agent workflow roadmap',
     'upcoming features',
     'AI coding tools',
     'product roadmap',
@@ -21,7 +22,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Roadmap - AI DevKit',
     description:
-      "See what we're building and where we're headed with AI DevKit - our development roadmap and upcoming features.",
+      "See what we're building next for AI DevKit: planning, memory, verification, skills, review, and multi-agent workflow support.",
     url: `${siteUrl}/roadmap`,
     siteName: 'AI DevKit',
     locale: 'en_US',
@@ -31,7 +32,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'Roadmap - AI DevKit',
     description:
-      "See what we're building and where we're headed with AI DevKit - our development roadmap and upcoming features.",
+      "See what we're building next for AI DevKit: planning, memory, verification, skills, review, and multi-agent workflow support.",
   },
   alternates: {
     canonical: `${siteUrl}/roadmap`,
@@ -68,7 +69,7 @@ export default function RoadmapPage() {
         <h1 className="text-4xl md:text-5xl font-bold mb-4">Roadmap</h1>
 
         <p className="text-xl text-gray-600 mb-12">
-          Our development roadmap shows what we're working on and what's coming next for AI DevKit.
+          {`Our roadmap shows what's next for making AI coding agents plan before code, remember project decisions, verify work, and share one workflow across tools.`}
         </p>
 
         {roadmapItems.length === 0 ? (
@@ -127,7 +128,7 @@ export default function RoadmapPage() {
           <div className="bg-gray-50 p-8 rounded-lg border border-gray-200">
             <h2 className="text-2xl font-bold mb-4">Have ideas?</h2>
             <p className="text-gray-600 mb-6">
-              We'd love to hear your suggestions for AI DevKit. Open an issue or discussion on GitHub to share your thoughts.
+              {`We'd love to hear your suggestions for AI DevKit. Open an issue or discussion on GitHub to share your thoughts.`}
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
               <a
@@ -154,9 +155,9 @@ export default function RoadmapPage() {
   );
 }
 
-function RoadmapItem({ item }: { item: { metadata: any; content: string } }) {
-  const statusColor = statusColors[item.metadata.status as keyof typeof statusColors] || statusColors.planned;
-  const statusLabel = statusLabels[item.metadata.status as keyof typeof statusLabels] || 'Unknown';
+function RoadmapItem({ item }: { item: RoadmapItemType }) {
+  const statusColor = statusColors[item.metadata.status] || statusColors.planned;
+  const statusLabel = statusLabels[item.metadata.status] || 'Unknown';
 
   return (
     <div className="border border-gray-200 rounded-lg p-6 hover:border-gray-400 transition-colors">

@@ -1,33 +1,44 @@
+import type { MockedFunction } from 'vitest';
 import { Command } from 'commander';
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { registerMemoryCommand } from '../../commands/memory';
-import { memorySearchCommand, memoryStoreCommand, memoryUpdateCommand } from '@ai-devkit/memory';
-import { ui } from '../../util/terminal-ui';
 
-jest.mock('@ai-devkit/memory', () => ({
-  memoryStoreCommand: jest.fn(),
-  memorySearchCommand: jest.fn(),
-  memoryUpdateCommand: jest.fn()
+import { registerMemoryCommand } from '../../commands/memory.js';
+import { memorySearchCommand, memoryStoreCommand, memoryUpdateCommand } from '@ai-devkit/memory';
+import { ui } from '../../util/terminal-ui.js';
+
+const mockGetMemoryDbPath = vi.fn<() => Promise<string | undefined>>();
+const mockConfigManager = {
+  getMemoryDbPath: mockGetMemoryDbPath
+};
+
+vi.mock('@ai-devkit/memory', () => ({
+  memoryStoreCommand: vi.fn(),
+  memorySearchCommand: vi.fn(),
+  memoryUpdateCommand: vi.fn()
+}), { virtual: true });
+
+vi.mock('../../lib/Config.js', () => ({
+  ConfigManager: vi.fn(() => mockConfigManager)
 }));
 
-jest.mock('../../util/terminal-ui', () => ({
+vi.mock('../../util/terminal-ui.js', () => ({
   ui: {
-    error: jest.fn(),
-    warning: jest.fn(),
-    table: jest.fn()
-  }
+    error: vi.fn(),
+    warning: vi.fn(),
+    table: vi.fn()
+  },
 }));
 
 describe('memory command', () => {
-  const mockedMemorySearchCommand = memorySearchCommand as jest.MockedFunction<typeof memorySearchCommand>;
-  const mockedMemoryStoreCommand = memoryStoreCommand as jest.MockedFunction<typeof memoryStoreCommand>;
-  const mockedMemoryUpdateCommand = memoryUpdateCommand as jest.MockedFunction<typeof memoryUpdateCommand>;
-  const mockedUi = jest.mocked(ui);
-  let consoleLogSpy: ReturnType<typeof jest.spyOn>;
+  const mockedMemorySearchCommand = memorySearchCommand as MockedFunction<typeof memorySearchCommand>;
+  const mockedMemoryStoreCommand = memoryStoreCommand as MockedFunction<typeof memoryStoreCommand>;
+  const mockedMemoryUpdateCommand = memoryUpdateCommand as MockedFunction<typeof memoryUpdateCommand>;
+  const mockedUi = vi.mocked(ui);
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.clearAllMocks();
+    mockGetMemoryDbPath.mockResolvedValue(undefined);
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   });
 
   it('prints JSON for memory store', async () => {
@@ -51,15 +62,47 @@ describe('memory command', () => {
       'This is a valid content body long enough to satisfy constraints.'
     ]);
 
-    expect(mockedMemoryStoreCommand).toHaveBeenCalled();
+    expect(mockedMemoryStoreCommand).toHaveBeenCalledWith({
+      title: 'A valid title 123',
+      content: 'This is a valid content body long enough to satisfy constraints.',
+      tags: undefined,
+      scope: 'global',
+      dbPath: undefined
+    });
     expect(consoleLogSpy).toHaveBeenCalledWith(JSON.stringify(result, null, 2));
+  });
+
+  it('passes resolved project dbPath to memory store', async () => {
+    mockGetMemoryDbPath.mockResolvedValue('/repo/.ai-devkit/project-memory.db');
+    mockedMemoryStoreCommand.mockReturnValue({
+      success: true,
+      id: 'mem-1',
+      message: 'stored'
+    });
+
+    const program = new Command();
+    registerMemoryCommand(program);
+    await program.parseAsync([
+      'node',
+      'test',
+      'memory',
+      'store',
+      '--title',
+      'A valid title 123',
+      '--content',
+      'This is a valid content body long enough to satisfy constraints.'
+    ]);
+
+    expect(mockedMemoryStoreCommand).toHaveBeenCalledWith(expect.objectContaining({
+      dbPath: '/repo/.ai-devkit/project-memory.db'
+    }));
   });
 
   it('handles store errors by showing error and exiting', async () => {
     mockedMemoryStoreCommand.mockImplementation(() => {
       throw new Error('store failed');
     });
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit');
     }) as never);
 
@@ -79,7 +122,7 @@ describe('memory command', () => {
       ])
     ).rejects.toThrow('process.exit');
 
-    expect(mockedUi.error).toHaveBeenCalledWith('store failed');
+    expect(mockedUi.error).toHaveBeenCalledWith('Failed to store knowledge: store failed');
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
@@ -104,7 +147,14 @@ describe('memory command', () => {
       'Updated title for testing',
     ]);
 
-    expect(mockedMemoryUpdateCommand).toHaveBeenCalled();
+    expect(mockedMemoryUpdateCommand).toHaveBeenCalledWith({
+      id: 'mem-1',
+      title: 'Updated title for testing',
+      content: undefined,
+      tags: undefined,
+      scope: undefined,
+      dbPath: undefined
+    });
     expect(consoleLogSpy).toHaveBeenCalledWith(JSON.stringify(result, null, 2));
   });
 
@@ -112,7 +162,7 @@ describe('memory command', () => {
     mockedMemoryUpdateCommand.mockImplementation(() => {
       throw new Error('update failed');
     });
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit');
     }) as never);
 
@@ -132,7 +182,7 @@ describe('memory command', () => {
       ])
     ).rejects.toThrow('process.exit');
 
-    expect(mockedUi.error).toHaveBeenCalledWith('update failed');
+    expect(mockedUi.error).toHaveBeenCalledWith('Failed to update knowledge: update failed');
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
@@ -161,7 +211,8 @@ describe('memory command', () => {
       query: 'dto',
       tags: undefined,
       scope: undefined,
-      limit: 5
+      limit: 5,
+      dbPath: undefined
     });
     expect(consoleLogSpy).toHaveBeenCalledWith(JSON.stringify(result, null, 2));
     expect(mockedUi.table).not.toHaveBeenCalled();
@@ -191,13 +242,44 @@ describe('memory command', () => {
       query: 'memory',
       tags: undefined,
       scope: undefined,
-      limit: 3
+      limit: 3,
+      dbPath: undefined
     });
     expect(mockedUi.table).toHaveBeenCalledWith({
       headers: ['id', 'title', 'scope'],
       rows: [['mem-1', 'A very long memory title that should be truncated for nar...', 'project:ai-devkit']]
     });
     expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('"results"'));
+  });
+
+  it('passes resolved project dbPath to memory search and update', async () => {
+    mockGetMemoryDbPath.mockResolvedValue('/repo/.ai-devkit/project-memory.db');
+    mockedMemorySearchCommand.mockReturnValue({
+      results: [],
+      totalMatches: 0,
+      query: 'dto'
+    });
+    mockedMemoryUpdateCommand.mockReturnValue({
+      success: true,
+      id: 'mem-1',
+      message: 'Knowledge updated successfully'
+    });
+
+    let program = new Command();
+    registerMemoryCommand(program);
+    await program.parseAsync(['node', 'test', 'memory', 'search', '--query', 'dto']);
+
+    expect(mockedMemorySearchCommand).toHaveBeenCalledWith(expect.objectContaining({
+      dbPath: '/repo/.ai-devkit/project-memory.db'
+    }));
+
+    program = new Command();
+    registerMemoryCommand(program);
+    await program.parseAsync(['node', 'test', 'memory', 'update', '--id', 'mem-1', '--title', 'Updated title for testing']);
+
+    expect(mockedMemoryUpdateCommand).toHaveBeenCalledWith(expect.objectContaining({
+      dbPath: '/repo/.ai-devkit/project-memory.db'
+    }));
   });
 
   it('shows a warning when --table has no matching results', async () => {
@@ -219,7 +301,7 @@ describe('memory command', () => {
     mockedMemorySearchCommand.mockImplementation(() => {
       throw new Error('search failed');
     });
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit');
     }) as never);
 
@@ -230,7 +312,7 @@ describe('memory command', () => {
       program.parseAsync(['node', 'test', 'memory', 'search', '--query', 'memory'])
     ).rejects.toThrow('process.exit');
 
-    expect(mockedUi.error).toHaveBeenCalledWith('search failed');
+    expect(mockedUi.error).toHaveBeenCalledWith('Failed to search knowledge: search failed');
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
